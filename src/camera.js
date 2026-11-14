@@ -3,9 +3,10 @@ import simdLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm
 import simdBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm?url';
 import fallbackLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js?url';
 import fallbackBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm?url';
+import { centerCameraCrop, sourceLandmarks } from './camera-crop.js';
 
 const frameIntervalMs = 1000 / 15;
-const stalledVideoMs = 250;
+const stalledVideoMs = 200;
 const modelAssetPath = `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`;
 
 async function createLandmarker() {
@@ -18,7 +19,7 @@ async function createLandmarker() {
     runningMode: 'VIDEO',
     numPoses: 1,
     minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
+    minPosePresenceConfidence: 0.42,
     minTrackingConfidence: 0.5,
   });
 }
@@ -38,9 +39,15 @@ function describeCameraError(error) {
 
 export function createCamera(video, { onFrame, onError }) {
   let active = null;
+  const cropCanvas = document.createElement('canvas');
+  const cropContext = cropCanvas.getContext('2d', { alpha: false });
 
   function release(session) {
-    cancelAnimationFrame(session.frameId);
+    if (session.frameId !== null) {
+      if (session.usesVideoFrames) video.cancelVideoFrameCallback(session.frameId);
+      else cancelAnimationFrame(session.frameId);
+    }
+    window.clearInterval(session.watchdogId);
     session.stream?.getTracks().forEach((track) => track.stop());
     if (session.stream && video.srcObject === session.stream) {
       video.pause();
@@ -62,41 +69,59 @@ export function createCamera(video, { onFrame, onError }) {
     onError?.(error);
   }
 
-  function sample(session, timestampMs) {
-    if (session !== active) return;
-    if (timestampMs - session.lastSampleAt >= frameIntervalMs) {
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-      const hasNewFrame = video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-        && width > 0 && height > 0 && video.currentTime !== session.lastVideoTime;
+  function schedule(session) {
+    session.frameId = session.usesVideoFrames
+      ? video.requestVideoFrameCallback((now, frame) => sample(session, now, frame.mediaTime))
+      : requestAnimationFrame((now) => sample(session, now, video.currentTime));
+  }
 
-      try {
-        let result;
-        if (hasNewFrame) {
-          session.lastVideoTime = video.currentTime;
-          session.lastVideoAt = timestampMs;
-          result = session.landmarker.detectForVideo(video, timestampMs);
-        }
-        if (result || timestampMs - session.lastVideoAt >= stalledVideoMs) {
+  function sample(session, timestampMs, mediaTime) {
+    if (session !== active) return;
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    const hasNewFrame = video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      && width > 0 && height > 0 && mediaTime !== session.lastVideoTime;
+    if (hasNewFrame) {
+      session.lastVideoTime = mediaTime;
+      session.lastVideoAt = timestampMs;
+      // Allow small camera clock variations around the nominal frame interval.
+      if (timestampMs - session.lastSampleAt >= frameIntervalMs - 5) {
+        try {
+          const crop = cropContext ? centerCameraCrop(width, height) : { left: 0, width };
+          let inferenceSource = video;
+          if (crop.width < width) {
+            if (cropCanvas.width !== crop.width) cropCanvas.width = crop.width;
+            if (cropCanvas.height !== height) cropCanvas.height = height;
+            cropContext.drawImage(video, crop.left, 0, crop.width, height, 0, 0, crop.width, height);
+            inferenceSource = cropCanvas;
+          }
+          const result = session.landmarker.detectForVideo(inferenceSource, timestampMs);
           session.lastSampleAt = timestampMs;
+          session.crop = crop;
           onFrame({
-            landmarks: result?.landmarks[0] ?? null,
-            worldLandmarks: result?.worldLandmarks[0] ?? null,
+            landmarks: sourceLandmarks(result.landmarks[0] ?? null, width, crop),
             timestampMs,
             width,
             height,
+            crop,
             video,
           });
+        } catch (error) {
+          fail(session, new Error('Pose tracking stopped. Restart the camera to try again.', { cause: error }));
+          return;
         }
-      } catch (error) {
-        fail(session, new Error('Pose tracking stopped. Restart the camera to try again.', { cause: error }));
-        return;
       }
     }
+    if (session === active) schedule(session);
+  }
 
-    if (session === active) {
-      session.frameId = requestAnimationFrame((now) => sample(session, now));
-    }
+  function reportStall(session) {
+    if (session !== active) return;
+    const now = performance.now();
+    if (now - session.lastVideoAt < stalledVideoMs || now - session.lastSampleAt < frameIntervalMs) return;
+    if (!(video.videoWidth > 0 && video.videoHeight > 0)) return;
+    session.lastSampleAt = now;
+    onFrame({ landmarks: null, timestampMs: now, width: video.videoWidth, height: video.videoHeight, crop: session.crop, video });
   }
 
   async function start() {
@@ -109,6 +134,9 @@ export function createCamera(video, { onFrame, onError }) {
       stream: null,
       landmarker: null,
       frameId: null,
+      watchdogId: null,
+      usesVideoFrames: typeof video.requestVideoFrameCallback === 'function'
+        && typeof video.cancelVideoFrameCallback === 'function',
       lastSampleAt: -Infinity,
       lastVideoTime: -1,
       lastVideoAt: performance.now(),
@@ -152,7 +180,9 @@ export function createCamera(video, { onFrame, onError }) {
       return;
     }
 
-    session.frameId = requestAnimationFrame((now) => sample(session, now));
+    session.lastVideoAt = performance.now();
+    session.watchdogId = window.setInterval(() => reportStall(session), 65);
+    schedule(session);
   }
 
   return { start, stop };

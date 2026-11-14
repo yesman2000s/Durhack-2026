@@ -1,6 +1,6 @@
 # Durhack-2026 · COMPOSE squat camera
 
-Standalone browser and Python tools for capturing one side-view bodyweight squat. The camera checks your position, counts down automatically, and saves five moments for review: standing, lowering, deepest point, rising, and standing again. The first valid rep is your baseline for the current camera session. No score, fault diagnosis, uploads, Gemini, or ElevenLabs are part of this version.
+Standalone browser and Python tools for capturing one side-view squat, with bodyweight and barbell options. The camera checks your position, counts down automatically, and saves five moments for review: standing, lowering, deepest point, rising, and standing again. It also records a pose trace for skeleton playback. The first valid rep is your baseline for the current camera session.
 
 ## Run the browser version
 
@@ -23,20 +23,22 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe python\compose_camera.py
 ```
 
-The preview opens and arms the first rep automatically. Use **Space** to arm another rep, **X** to cancel, **E** to export, **C** to clear the result, **R** to reset setup, **G** to toggle the example (**+**/**−** adjusts range), and **Esc** or **Q** to quit. Use `--camera 1` if the default camera is the wrong device, `--output <directory>` to change the export location (default: `captures/`), or `--quiet` to turn off the Windows Go sound.
+The preview opens and arms the first rep automatically. Use **Space** to arm another rep, **X** to cancel capture or close playback, **P** to play, pause or replay the skeleton, **E** to export, **C** to clear the result, **R** to reset setup, **G** to toggle the example (**+**/**−** adjusts range), and **Esc** or **Q** to quit. Use `--variant barbell` to label a barbell squat, `--camera 1` to switch camera, `--output <directory>` to change the export location (default: `captures/`), or `--quiet` to turn off the Windows Go sound.
 
 ## Capture a rep
 
-1. Set the laptop on a stable surface rather than holding it. Face left or right, with the camera looking at your side. Keep your head, knees, and full feet visible, and leave room in the frame for the whole movement.
-2. Stand still for about two seconds, then wait for the five-second countdown and the **Go** signal. If you move before the countdown ends, it waits for you to settle again. The browser and Windows desktop app also play a brief Go sound.
-3. Lower through a comfortable range, stand back up, and hold your starting position briefly. The tracker ends the capture after one complete cycle. If it loses your pose or can't see a complete cycle, it asks you to set up and try again.
-4. Review the five snapshots. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Until export, the latest rep is held in memory. Keep the export to preserve your first-day baseline; cross-day history is outside this prototype.
+1. Set the laptop on a stable surface and face left or right. The preview trims the sides of wide camera frames. Stand in the middle with your head and both feet visible, with enough room to squat. In the browser, select **Barbell** before starting the camera if you're using one.
+2. Stand still for about two seconds. The app saves your standing stance, then shows a three-second countdown and **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
+3. Lower through a comfortable range, stand back up, and hold briefly. The tracker uses your saved stance to recognize the finish and can tolerate small shifts and brief tracking gaps. If it loses sight of you for longer or can't see a complete cycle, it asks you to try again.
+4. Review the five snapshots. Use **Play skeleton** and the time slider in the browser, or **P** in Python, to replay the tracked movement. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Until export, the latest rep is held in memory.
 
 The side-view example shows how the hips, knees, and torso move. It scales the sketch using estimated thigh-to-shin and torso-to-leg ratios and lets you choose a range. Your first rep records your own comfortable range. A camera view and body proportions alone cannot determine an ideal or safe depth. The detector needs visible movement to distinguish a squat from a small posture change; a shallow or interrupted attempt may not count.
 
 ## What the export contains
 
-Both versions use version 1 of the same JSON format, with the camera dimensions, tracked side, baseline values, the measured phases, and ordered JPEGs encoded as base64. Snapshot `offsetMs` and `movementStartOffsetMs` are relative to the end of the countdown. Joints in the snapshot metadata use normalized image coordinates and include model visibility estimates. The export is suitable as local input to a later analysis service.
+Both versions use version 1 of the same JSON format, with the camera dimensions, tracked side, baseline values, the measured phases, and ordered JPEGs encoded as base64. Snapshot `offsetMs` and `movementStartOffsetMs` are relative to the captured standing frame. JPEGs keep the full camera framing. Joints use normalized coordinates in that same full image and include model visibility estimates.
+
+The export labels the squat type as `bodyweight` or `barbell`. `motionTrace.frames` contains timestamped, normalized joints from the tracked side, with offsets relative to the same standing frame. Playback shows the pose trace without a video recording. Brief gaps can interpolate between nearby observations. Longer gaps appear blank.
 
 The metrics include lowering and rising time, pause, mean and peak projected vertical hip speed, knee bend and return angle, bottom hip, torso and shin angles, estimated standing proportions, and tracking quality. Speed is scaled to the projected standing leg length, so it is in leg lengths per second. The deepest image is the best observed loaded pose from the sampled frames; it may differ from the exact instant of maximum depth. Missing or low-quality poses are excluded. View angle, clothing, lighting and camera position can all affect these estimates. A side view cannot assess side-to-side knee alignment, spinal loading, or overall safety.
 
