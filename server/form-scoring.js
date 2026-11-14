@@ -1,4 +1,6 @@
 import { PHASE_LABELS } from '../src/evidence.js';
+import { normalizeFeedback } from './feedback.js';
+import { HttpError, jsonRoute } from './json-route.js';
 
 const squatMetrics = [
   'descentMs', 'ascentMs', 'pauseMs', 'kneeExcursionDeg', 'kneeAngleAtBottomDeg',
@@ -31,13 +33,6 @@ const responseSchema = {
 
 const maxBodyBytes = 12 * 1024 * 1024;
 
-class ScoringError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
 function numericFields(source, fields) {
   return Object.fromEntries(fields.flatMap((key) =>
     Number.isFinite(source?.[key]) ? [[key, source[key]]] : []));
@@ -46,17 +41,17 @@ function numericFields(source, fields) {
 function buildParts(input, exercise) {
   if (!Array.isArray(input.snapshots) || input.snapshots.length < 1 ||
       input.snapshots.length > exercise.phases.length) {
-    throw new ScoringError(400, 'Include at least one phase image from a captured rep.');
+    throw new HttpError(400, 'Include at least one phase image from a captured rep.');
   }
   const snapshots = new Map();
   for (const snapshot of input.snapshots) {
     if (!exercise.phases.includes(snapshot?.phase) || snapshots.has(snapshot.phase)) {
-      throw new ScoringError(400, 'Each image must have a distinct exercise phase.');
+      throw new HttpError(400, 'Each image must have a distinct exercise phase.');
     }
     if (snapshot.mimeType !== 'image/jpeg' || typeof snapshot.imageBase64 !== 'string' ||
         !snapshot.imageBase64.startsWith('/9j/') || snapshot.imageBase64.length % 4 !== 0 ||
         !/^[A-Za-z0-9+/]+={0,2}$/.test(snapshot.imageBase64)) {
-      throw new ScoringError(400, 'Provide each snapshot as a base64 JPEG.');
+      throw new HttpError(400, 'Provide each snapshot as a base64 JPEG.');
     }
     snapshots.set(snapshot.phase, snapshot);
   }
@@ -82,9 +77,9 @@ export async function scoreForm(input, {
   apiKey, model = 'gemini-3.6-flash', fetchImpl = globalThis.fetch, signal,
 } = {}) {
   const exercise = exercises.get(input?.exercise);
-  if (!exercise) throw new ScoringError(400, 'Choose a supported exercise. Currently, squat is available.');
+  if (!exercise) throw new HttpError(400, 'Choose a supported exercise. Currently, squat is available.');
   const parts = buildParts(input, exercise);
-  if (!apiKey) throw new ScoringError(503, 'Form scoring is unavailable. Set GEMINI_API_KEY on the server.');
+  if (!apiKey) throw new HttpError(503, 'Form scoring is unavailable. Set GEMINI_API_KEY on the server.');
 
   const timeout = AbortSignal.timeout(40_000);
   const response = await fetchImpl(
@@ -105,70 +100,27 @@ Return at most three different cues in priority order. Each must be a single pla
       }),
     },
   );
-  if (response.status === 429) throw new ScoringError(429, 'Form scoring is busy. Try again shortly.');
-  if (!response.ok) throw new ScoringError(502, 'Gemini could not score this rep. Try again shortly.');
+  if (response.status === 429) throw new HttpError(429, 'Form scoring is busy. Try again shortly.');
+  if (!response.ok) throw new HttpError(502, 'Gemini could not score this rep. Try again shortly.');
 
   const candidate = (await response.json()).candidates?.[0];
   const output = candidate?.content?.parts?.filter((part) => !part.thought).map((part) => part.text).join('');
-  const result = JSON.parse(output ?? 'null');
-  const score = result?.score;
-  const tips = result?.tips;
-  if (candidate?.finishReason !== 'STOP' ||
-      (score !== null && (!Number.isInteger(score) || score < 0 || score > 100)) ||
-      !Array.isArray(tips) || tips.length > 3 ||
-      tips.some((tip) => typeof tip !== 'string' || !tip.trim() || tip.length > 120 ||
-        tip.trim().split(/\s+/).length > 12)) {
-    throw new ScoringError(502, 'Gemini returned unusable feedback. Try scoring the rep again.');
+  const result = normalizeFeedback(JSON.parse(output ?? 'null'));
+  if (candidate?.finishReason !== 'STOP' || !result) {
+    throw new HttpError(502, 'Gemini returned unusable feedback. Try scoring the rep again.');
   }
-  return { score, tips: tips.map((tip) => tip.trim()) };
+  return result;
 }
 
 export function formScoringRoute(options) {
-  return async (req, res, next) => {
-    if (req.url?.split('?')[0] !== '/api/form-score') return next();
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Cache-Control', 'no-store');
-    const send = (status, data) => {
-      if (res.destroyed) return;
-      res.statusCode = status;
-      res.end(JSON.stringify(data));
-    };
-    if (req.method !== 'POST') {
-      res.setHeader('Allow', 'POST');
-      return send(405, { error: 'Use POST to score a rep.' });
-    }
-    if (req.headers.origin && !['http', 'https'].some((scheme) =>
-      req.headers.origin === `${scheme}://${req.headers.host}`)) {
-      return send(403, { error: 'Send the request from the camera app origin.' });
-    }
-    if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json') {
-      return send(415, { error: 'Send the rep as application/json.' });
-    }
-
-    const controller = new AbortController();
-    res.once('close', () => controller.abort());
-    try {
-      let size = 0;
-      const chunks = [];
-      for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-        size += chunk.length;
-        if (size > maxBodyBytes) {
-          req.resume();
-          return send(413, { error: 'Rep data exceeds the 12 MiB limit.' });
-        }
-        chunks.push(chunk);
-      }
-      let input;
-      try {
-        input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch {
-        return send(400, { error: 'Send valid JSON rep data.' });
-      }
-      return send(200, await scoreForm(input, { ...options, signal: controller.signal }));
-    } catch (error) {
-      if (error instanceof ScoringError) return send(error.status, { error: error.message });
-      if (error.name === 'TimeoutError') return send(504, { error: 'Gemini took too long. Try again.' });
-      return send(502, { error: 'Form scoring is temporarily unavailable. Try again.' });
-    }
-  };
+  return jsonRoute({
+    path: '/api/form-score',
+    maxBytes: maxBodyBytes,
+    sizeError: 'Rep data exceeds the 12 MiB limit.',
+    timeoutError: 'Gemini took too long. Try again.',
+    unavailableError: 'Form scoring is temporarily unavailable. Try again.',
+  }, async (input, signal) => ({
+    contentType: 'application/json',
+    body: JSON.stringify(await scoreForm(input, { ...options, signal })),
+  }));
 }

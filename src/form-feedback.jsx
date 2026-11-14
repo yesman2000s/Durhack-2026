@@ -1,6 +1,59 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { exportSnapshot } from './evidence.js';
 
+function FeedbackSpeech({ feedback }) {
+  const player = useRef(null);
+  const [needsPlayback, setNeedsPlayback] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const audio = player.current;
+    let audioUrl;
+
+    async function speak() {
+      try {
+        const response = await fetch('/api/form-speech', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify(feedback),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          throw new Error(data?.error ?? 'Feedback audio is unavailable.');
+        }
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        audioUrl = URL.createObjectURL(blob);
+        audio.src = audioUrl;
+        await audio.play();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (error.name === 'NotAllowedError') setNeedsPlayback(true);
+        else setError(error.message || 'Feedback audio could not play.');
+      }
+    }
+
+    speak();
+    return () => {
+      controller.abort();
+      if (audioUrl) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+  }, [feedback]);
+
+  return <>
+    {error && <p role="status">{error}</p>}
+    {needsPlayback && <p>Autoplay is blocked by your browser.</p>}
+    <audio ref={player} hidden={!needsPlayback} controls={needsPlayback} aria-label="Spoken form feedback" />
+  </>;
+}
+
 export function FormFeedback({ rep }) {
   const [feedback, setFeedback] = useState(null);
   const [error, setError] = useState('');
@@ -57,5 +110,6 @@ export function FormFeedback({ rep }) {
         {feedback.tips.length > 0 && <ul>{feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}
       </>}
     </div>
+    {feedback && <FeedbackSpeech feedback={feedback} />}
   </section>;
 }

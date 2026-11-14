@@ -68,7 +68,13 @@ The response contains an integer score from 0 to 100 and up to three short, spee
 
 When Gemini needs clearer evidence, `score` is `null` and `tips` contains a filming cue. The endpoint accepts up to 12 MiB of JSON and sends Gemini the phase JPEGs, timings, and selected numeric measurements. The exercise definitions and rubrics live in [server/form-scoring.js](server/form-scoring.js).
 
-Vite dev and preview serve the API from the same origin. Static deployments of `dist/` need a server mounting `formScoringRoute` at the same origin. Keep the score route behind application authentication and rate limits if deploying beyond localhost.
+## Hear the feedback
+
+Add `ELEVENLABS_API_KEY=<your key>` to `.env.local` and restart Vite. The default voice is George. Set `ELEVENLABS_VOICE_ID` to select another voice. After **Score this rep** returns, the score and tips appear on screen and play aloud automatically. If the browser blocks autoplay, an audio control appears.
+
+`POST /api/form-speech` accepts the `{score, tips}` returned by `/api/form-score` and responds with `audio/mpeg`. ElevenLabs receives only the narration text.
+
+Vite dev and preview serve both APIs from the same origin. Static deployments of `dist/` need a server mounting `formScoringRoute` and `feedbackSpeechRoute` at the same origin. Keep both routes behind application authentication and rate limits if deploying beyond localhost.
 
 ## Verify
 
