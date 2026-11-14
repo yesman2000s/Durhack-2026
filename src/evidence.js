@@ -45,7 +45,7 @@ export function captureImage(source, width, height) {
   return { url, width: canvas.width, height: canvas.height };
 }
 
-export function makeEvidence({ rep, images, captureStartMs, source, camera, capturedAt, reference }) {
+export function makeEvidence({ rep, images, motionTrace, captureStartMs, source, camera, capturedAt, reference, variant = 'bodyweight' }) {
   const metrics = {
     ...rep.metrics,
     kneeExcursionDeg: rep.metrics.startKneeAngleDeg - rep.metrics.kneeAngleAtBottomDeg,
@@ -59,7 +59,7 @@ export function makeEvidence({ rep, images, captureStartMs, source, camera, capt
   return {
     schemaVersion: 1,
     id: globalThis.crypto.randomUUID(),
-    exercise: 'squat', variant: 'bodyweight', captureMode: 'single-rep',
+    exercise: 'squat', variant, captureMode: 'single-rep',
     source, capturedAt, camera, trackingSide: rep.side,
     movementStartOffsetMs: Math.round(rep.startedAtMs - captureStartMs),
     reference: reference ?? null,
@@ -75,6 +75,7 @@ export function makeEvidence({ rep, images, captureStartMs, source, camera, capt
       measurementLimits: 'Estimates from one side in 2D. Do not infer side-to-side knee alignment, spinal loading, overall safety, or balance.',
     },
     snapshots,
+    ...(motionTrace ? { motionTrace } : {}),
   };
 }
 

@@ -77,7 +77,10 @@ export function createDemo(canvas, onFrame) {
   };
 }
 
-export function drawPose(canvas, { landmarks, width, height }, side) {
+export function drawPose(canvas, { landmarks, width: sourceWidth, height, crop }, side, capturing = false) {
+  const width = crop?.width ?? sourceWidth;
+  const left = crop?.left ?? 0;
+  const x = (point) => point.x * sourceWidth - left;
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
   const ctx = canvas.getContext('2d');
@@ -85,17 +88,20 @@ export function drawPose(canvas, { landmarks, width, height }, side) {
   if (!landmarks?.length || !side) return;
   const offset = side === 'right' ? 1 : 0;
   const get = (id) => landmarks[id + offset];
-  function visible(p) { return p && p.visibility >= 0.55 && p.x > 0 && p.x < 1 && p.y > 0 && p.y < 1; }
+  function visible(point, index) {
+    const minimum = capturing && index < 29 ? (index === 11 ? 0.30 : 0.35) : 0.55;
+    return point && (point.visibility ?? 1) >= minimum && x(point) > 0 && x(point) < width && point.y > 0 && point.y < 1;
+  }
   ctx.strokeStyle = '#b8f6ce'; ctx.lineWidth = Math.max(2, width / 320); ctx.lineCap = 'round';
   ctx.shadowColor = '#0a1717'; ctx.shadowBlur = 5;
   for (const [a, b] of [[11, 23], [23, 25], [25, 27], [27, 29], [27, 31]]) {
     const p = get(a), q = get(b);
-    if (!visible(p) || !visible(q)) continue;
-    ctx.beginPath(); ctx.moveTo(p.x * width, p.y * height); ctx.lineTo(q.x * width, q.y * height); ctx.stroke();
+    if (!visible(p, a) || !visible(q, b)) continue;
+    ctx.beginPath(); ctx.moveTo(x(p), p.y * height); ctx.lineTo(x(q), q.y * height); ctx.stroke();
   }
   for (const i of [11, 23, 25, 27]) {
     const p = get(i);
-    if (!visible(p)) continue;
-    ctx.fillStyle = '#112e27'; ctx.beginPath(); ctx.arc(p.x * width, p.y * height, Math.max(4, width / 150), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (!visible(p, i)) continue;
+    ctx.fillStyle = '#112e27'; ctx.beginPath(); ctx.arc(x(p), p.y * height, Math.max(4, width / 150), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 }

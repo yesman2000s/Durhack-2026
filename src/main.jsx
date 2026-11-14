@@ -2,18 +2,29 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SquatTracker } from './squat-tracker.js';
 import { createDemo, drawPose } from './demo.js';
+import { poseInCenter } from './camera-crop.js';
+import { makeMotionTrace, recordPose } from './motion-trace.js';
+import { SkeletonPlayback } from './skeleton-playback.jsx';
 import { captureImage, downloadEvidence, FORM_GUIDE, framePose, makeEvidence, PHASE_LABELS } from './evidence.js';
 import './styles.css';
 
 const DEFAULT_SETUP = { ready: false, checks: {}, message: 'Start the camera to check your position.', progress: 0 };
 const CHECKS = [
-  ['inFrame', 'Full body in frame', 'Leave space above your head and below your feet.'],
-  ['sideOn', 'Side view', 'Face left or right. Keep the laptop still.'],
-  ['standing', 'Start tall', 'Stand comfortably with both feet on the floor.'],
-  ['steady', 'Hold still', 'Stay in that position for about two seconds.'],
+  ['inFrame', 'Fit your whole body', 'Keep your head and feet in view.'],
+  ['sideOn', 'Turn to the side', 'Face left or right.'],
+  ['steady', 'Stand tall and still', 'Wait for the countdown and Go signal.'],
 ];
 const PHASE = { setup: 'Positioning', ready: 'Ready', descending: 'Lowering', bottom: 'Bottom', ascending: 'Rising' };
-const COUNTDOWN_SECONDS = 5;
+const COUNTDOWN_SECONDS = 3;
+const DISCARD_MESSAGES = {
+  'tracking-gap': 'Tracking was lost. Keep your near hip, knee and ankle in view, then try again.',
+  'foot-moved': 'Your foot position changed. Stand still and redo setup.',
+  'low-confidence': 'Too much of the squat was obscured. Keep your near hip, knee and ankle visible.',
+  'incomplete-descent': 'The camera saw a partial bend. Try one comfortable squat and return to standing.',
+  'incomplete-ascent': 'The camera missed the rise. Stand back up and hold briefly at the finish.',
+  'second-descent': 'The camera saw a second dip. Capture one squat at a time.',
+  timeout: 'No complete rep was detected in time. Stand tall and try again.',
+};
 const s = (ms) => `${(ms / 1000).toFixed(2)} s`;
 const deg = (n) => `${Math.round(n)}°`;
 const velocity = (n) => `${n.toFixed(2)}`;
@@ -21,6 +32,18 @@ const shown = (format, value) => Number.isFinite(value) ? format(value) : '—';
 
 function CameraIcon({ size = 25 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" stroke="currentColor" fill="none" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.7" y="5.4" width="13.5" height="13.2" rx="3"/><path d="m16.2 10 4.8-2.7v9.4L16.2 14"/></svg>;
+}
+
+function Icon({ name }) {
+  const paths = {
+    check: <path d="m5 12 4 4 10-10"/>,
+    shield: <path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Zm-3-10 2 2 4-4"/>,
+    play: <><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></>,
+    sound: <><path d="m11 5-6 4H2v6h3l6 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12"/></>,
+    mute: <><path d="m11 5-6 4H2v6h3l6 4V5Z"/><path d="m16 9 6 6m0-6-6 6"/></>,
+    download: <><path d="M12 3v12m-4-4 4 4 4-4"/><path d="M4 16v4h16v-4"/></>,
+  };
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 function figurePaths(x, depth, proportions) {
@@ -36,7 +59,7 @@ function figurePaths(x, depth, proportions) {
   return <g><path d={`M${x + 9},85 L${ankle} L${knee} L${hip} L${shoulder} l12,9`}/><circle cx={head[0]} cy={head[1]} r="5.5"/></g>;
 }
 
-function PracticeGuide({ live, reference }) {
+function PracticeGuide({ live, reference, guideRef }) {
   const [example, setExample] = useState('auto');
   const proportions = live ?? reference;
   const ratio = Math.min(1.65, Math.max(0.70, proportions?.standingThighToShinRatio ?? 1.1));
@@ -45,15 +68,15 @@ function PracticeGuide({ live, reference }) {
   const moderateBend = 22 + Math.acos(Math.min(1, 0.20 / thighFraction)) * 180 / Math.PI;
   const exampleBend = example === 'short' ? moderateBend - 26 : example === 'long' ? moderateBend + 8 : reference?.kneeExcursionDeg ?? moderateBend;
   const depth = Math.min(1, Math.max(0.38, exampleBend / 98));
-  return <details className="practice-guide">
-    <summary>See a side-view squat example</summary>
+  return <details className="practice-guide" ref={guideRef}>
+    <summary>See a squat example</summary>
     <div className="practice-guide-body">
       <svg className="form-example" viewBox="0 0 260 114" role="img" aria-label="Side view illustration: standing, lowering with bent knees and hips, then standing again">
-        <path d="M13 88H247" stroke="#4e6965" strokeWidth="1.5" />
-        <g fill="none" stroke="#b7f5cf" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 88H247" stroke="#a0abc4" strokeWidth="1.5" />
+        <g fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
           {figurePaths(48, 0, proportions)}{figurePaths(130, depth, proportions)}{figurePaths(208, 0, proportions)}
         </g>
-        <g fill="#b9c9c8" fontSize="11" fontFamily="system-ui" textAnchor="middle"><text x="48" y="107">Stand</text><text x="130" y="107">Lower</text><text x="208" y="107">Stand</text></g>
+        <g fill="currentColor" fontSize="11" fontFamily="system-ui" textAnchor="middle"><text x="48" y="107">Stand</text><text x="130" y="107">Lower</text><text x="208" y="107">Stand</text></g>
       </svg>
       <label className="example-control">Example range <select value={example} onChange={(event) => setExample(event.target.value)}><option value="auto">{reference ? 'Use first rep as a guide' : 'Moderate'}</option><option value="short">Shallower</option><option value="long">Deeper</option></select></label>
       <ul>{FORM_GUIDE.map((tip) => <li key={tip}>{tip}</li>)}</ul>
@@ -62,41 +85,74 @@ function PracticeGuide({ live, reference }) {
   </details>;
 }
 
-function RepResult({ result, reference, onClear }) {
-  const m = result?.metrics;
-  const values = m && [
-    ['Lowering', s, m.descentMs, 'Descent duration'], ['Rising', s, m.ascentMs, 'Ascent duration'],
+function RepResult({ result, onClear, titleRef }) {
+  const [selected, setSelected] = useState(result.snapshots.find(({ phase }) => phase === 'bottom')?.phase ?? result.snapshots[0]?.phase);
+  const [expanded, setExpanded] = useState(false);
+  const selectedSnapshot = result.snapshots.find(({ phase }) => phase === selected);
+  const m = result.metrics;
+  const reference = result.reference;
+  const mainValues = [
+    ['Lowering', s, m.descentMs],
+    ['Rising', s, m.ascentMs],
+    ['Knee bend', deg, m.kneeExcursionDeg, reference?.establishedByThisRep === false ? `First rep: ${deg(reference.kneeExcursionDeg)}` : ''],
+  ];
+  const details = [
     ['Down speed', velocity, m.averageDescentLegLengthsPerSec, 'Leg lengths per second'], ['Up speed', velocity, m.averageAscentLegLengthsPerSec, 'Leg lengths per second'],
-    ['Knee bend', deg, m.kneeExcursionDeg, reference?.establishedByThisRep === false ? `First rep: ${deg(reference.kneeExcursionDeg)}` : 'Change from standing'],
     ['Torso lean', deg, m.torsoLeanAtBottomDeg, 'From vertical at the bottom'], ['Return difference', deg, m.returnAngleErrorDeg, 'Compared with your start'],
     ['Tracking', (v) => `${Math.round(v * 100)}%`, m.validFrameFraction, 'Usable pose samples'],
   ];
-  return <section className="result-panel" aria-labelledby="result-title">
+  const renderMetric = ([label, format, value, note]) => <div className="metric-card" key={label}>
+    <dt>{label}</dt><dd>{shown(format, value)}{note && <small>{note}</small>}</dd>
+  </div>;
+
+  return <section className="result-panel" aria-labelledby="result-title" id="review">
     <div className="result-header">
-      <div><p className="eyebrow">REVIEW</p><h2 id="result-title">{m ? 'Rep captured' : 'Your rep review'}</h2></div>
-      {m && <div className="result-actions"><button className="button button-secondary" onClick={onClear}>Clear result</button><button className="button button-primary" onClick={() => downloadEvidence(result)}>Download rep data</button></div>}
-    </div>
-    {!m ? <p className="result-empty">After a tracked rep, your snapshots and measurements will appear here.</p> : <>
-      <div className="result-cue"><strong>{result.source === 'simulated' ? 'Simulated rep' : 'Capture summary'}</strong><p>{result.cue.text}</p></div>
-      <dl className="metrics-grid">
-        {values.map(([label, format, value, note]) => <div className="metric-card" key={label}><dt>{label}</dt><dd>{shown(format, value)}</dd><small>{note}</small></div>)}
-      </dl>
-      <div className="snapshots-grid" aria-label="Rep snapshots">
-        {result.snapshots.map((snapshot, index) => <figure className="snapshot-card" key={snapshot.phase}>
-          <img src={snapshot.url} alt={`${result.source === 'simulated' ? 'Illustration' : 'Side camera frame'}: ${PHASE_LABELS[snapshot.phase].toLowerCase()}`} />
-          <figcaption><span>{String(index + 1).padStart(2, '0')}</span> {PHASE_LABELS[snapshot.phase]}</figcaption>
-        </figure>)}
+      <div>
+        <h2 id="result-title" tabIndex={-1} ref={titleRef}>Rep captured</h2>
+        <p>{result.source === 'simulated' ? 'Simulated example' : result.variant === 'barbell' ? 'Barbell squat' : 'Bodyweight squat'}{reference?.establishedByThisRep ? ' · First rep baseline' : ''}</p>
       </div>
-      {result.snapshots.length < 5 && <p className="setup-hint">Some snapshots were unavailable. The export includes the images that were captured.</p>}
-      <details className="practice-guide">
-        <summary>More movement measurements</summary>
-        <div className="practice-guide-body">
-          <p>{result.observations.map((item) => item.message).join(' ')}</p>
-          <p>At the bottom: {shown(deg, m.kneeAngleAtBottomDeg)} knee angle, {shown(deg, m.shinLeanAtBottomDeg)} shin lean{Number.isFinite(m.hipAngleAtBottomDeg) ? `, ${deg(m.hipAngleAtBottomDeg)} hip angle` : ''}. Pause: {shown(s, m.pauseMs)}.</p>
-          <p>These estimates come from a single 2D view. This angle cannot assess side-to-side knee alignment, spinal loading, or overall squat safety.</p>
-        </div>
-      </details>
-    </>}
+      <div className="result-actions">
+        <button className="button button-secondary" onClick={onClear}>Clear result</button>
+        <button className="button button-primary" onClick={() => downloadEvidence(result)}><Icon name="download" />Download rep data</button>
+      </div>
+    </div>
+    <div className="result-layout">
+      <div className="result-evidence">
+        {result.snapshots.length > 0 && <div className="snapshots-grid" role="group" aria-label="Rep snapshots">
+          {result.snapshots.map((snapshot) => <button
+            className="snapshot-card" type="button" key={snapshot.phase} data-phase={snapshot.phase}
+            aria-pressed={snapshot.phase === selected} aria-expanded={expanded && snapshot.phase === selected}
+            onClick={() => {
+              setExpanded(selected !== snapshot.phase || !expanded);
+              setSelected(snapshot.phase);
+            }}
+          >
+            <img src={snapshot.url} alt="" />
+            <span>{PHASE_LABELS[snapshot.phase]}</span>
+          </button>)}
+        </div>}
+        {expanded && selectedSnapshot && <figure className="selected-snapshot">
+          <img src={selectedSnapshot.url} alt={`Side view · ${PHASE_LABELS[selectedSnapshot.phase]}`} />
+          <figcaption>{PHASE_LABELS[selectedSnapshot.phase]}<span>{s(selectedSnapshot.offsetMs)} from capture start</span></figcaption>
+        </figure>}
+        {result.snapshots.length < 5 && <p className="snapshot-note">Some snapshots were unavailable. The export includes the images that were captured.</p>}
+      </div>
+      <dl className="primary-metrics" aria-label="Key measurements">
+        {mainValues.map(renderMetric)}
+      </dl>
+    </div>
+    {result.motionTrace?.frames.length > 1 && <SkeletonPlayback
+      motionTrace={result.motionTrace} camera={result.camera} movementStartOffsetMs={result.movementStartOffsetMs}
+    />}
+    <details className="practice-guide">
+      <summary>More movement measurements</summary>
+      <div className="practice-guide-body">
+        <dl className="metrics-grid">{details.map(renderMetric)}</dl>
+        <p>{result.observations.map((item) => item.message).join(' ')}</p>
+        <p>At the bottom: {shown(deg, m.kneeAngleAtBottomDeg)} knee angle, {shown(deg, m.shinLeanAtBottomDeg)} shin lean{Number.isFinite(m.hipAngleAtBottomDeg) ? `, ${deg(m.hipAngleAtBottomDeg)} hip angle` : ''}. Pause: {shown(s, m.pauseMs)}.</p>
+        <p>These estimates come from a single 2D view. This angle cannot assess side-to-side knee alignment, spinal loading, or overall squat safety.</p>
+      </div>
+    </details>
   </section>;
 }
 
@@ -111,13 +167,15 @@ function App() {
   const cameraVideo = useRef(null);
   const demoVideo = useRef(null);
   const overlay = useRef(null);
-  const calibrationAnchor = useRef(null);
+  const guide = useRef(null);
+  const reviewTitle = useRef(null);
   const [mode, setMode] = useState('off');
+  const [variant, setVariant] = useState('bodyweight');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [view, setView] = useState({ phase: 'setup', setup: DEFAULT_SETUP, live: null });
-  const [cameraSize, setCameraSize] = useState({ width: 960, height: 540 });
+  const [cameraSize, setCameraSize] = useState({ width: 960, height: 540, crop: { left: 0, width: 960 } });
   const [captureStage, setCaptureStage] = useState('idle');
   const [countdown, setCountdown] = useState(0);
   const [showGo, setShowGo] = useState(false);
@@ -162,7 +220,6 @@ function App() {
 
   function clearReference() {
     currentReference.current = null;
-    calibrationAnchor.current = null;
     setReference(null);
   }
 
@@ -206,9 +263,19 @@ function App() {
     }
   }
 
+  function rememberStanding(a, frame, state) {
+    a.referenceAt = frame.timestampMs;
+    a.capturedAt = new Date().toISOString();
+    const image = safeCapture(frame, state);
+    if (image) a.images.set('start', image);
+    a.trace = [];
+    recordPose(a.trace, frame, state.live, true);
+  }
+
   function onFrame(frame, session) {
     if (session !== recorder.current) return;
     const { timestampMs, width, height } = frame;
+    const crop = frame.crop ?? { left: 0, width };
     if (session.width !== width || session.height !== height) {
       if (session.width) {
         resetSetup();
@@ -216,31 +283,38 @@ function App() {
       }
       session.width = width;
       session.height = height;
-      setCameraSize({ width, height });
+      setCameraSize({ width, height, crop });
     }
     const a = attempt.current;
-    const state = tracker.current.update({ ...frame, armed: a?.stage === 'armed' });
+    const trackingMotion = a?.stage === 'armed' || a?.stage === 'countdown';
+    const centered = poseInCenter(frame.landmarks, width, crop);
+    let state = tracker.current.update({
+      ...frame,
+      landmarks: centered || trackingMotion ? frame.landmarks : null,
+      armed: trackingMotion,
+    });
+    if (!trackingMotion && (!centered || (!frame.landmarks && crop.width < width && a))) {
+      state = { ...state, setup: { ...state.setup, message: 'Step into the center with your head and feet in view.' } };
+    }
     const setupSide = state.setup.checks.inFrame && frame.landmarks ? (frame.landmarks[23]?.visibility >= frame.landmarks[24]?.visibility ? 'left' : 'right') : null;
-    if (overlay.current) drawPose(overlay.current, frame, state.live?.side ?? setupSide);
+    if (overlay.current) drawPose(overlay.current, { ...frame, crop }, state.live?.side ?? setupSide, Boolean(state.live && trackingMotion));
     setView(state);
     const profile = currentReference.current;
-    const anchor = calibrationAnchor.current;
-    if (profile && state.setup.ready && state.live?.side) {
-      const i = state.live.side === 'right' ? 28 : 27;
-      const p = frame.landmarks?.[i];
-      const moved = anchor && p && Math.hypot((p.x - anchor.x) * width, (p.y - anchor.y) * height) > height * 0.13;
-      if (profile.trackingSide !== state.live.side || moved) {
-        resetSetup();
-        setNotice('Your side or position changed. Start a new capture to reset your baseline.');
-        return;
-      }
+    if (profile && !trackingMotion && state.setup.ready && state.live && profile.trackingSide !== state.live.side) {
+      clearReference();
     }
     if (!a) return;
-    if (a.stage === 'positioning') {
+    if (trackingMotion) recordPose(a.trace, frame, state.live, state.events.some(({ type, phase }) => type === 'capture' && phase === 'finish'));
+    if (a.stage !== 'armed') {
       a.positioningStartedAt ??= timestampMs;
       if (timestampMs - a.positioningStartedAt > 45000) {
         clearAttempt('Setup timed out. Start again when you’re ready.');
-      } else if (state.setup.ready && state.phase === 'ready') {
+        return;
+      }
+    }
+    if (a.stage === 'positioning') {
+      if (state.setup.ready && state.phase === 'ready') {
+        rememberStanding(a, frame, state);
         a.stage = 'countdown';
         a.countStartedAt = timestampMs;
         setCountdown(COUNTDOWN_SECONDS);
@@ -249,27 +323,31 @@ function App() {
       return;
     }
     if (a.stage === 'countdown') {
-      if (!state.setup.ready || state.phase !== 'ready') {
+      if (state.events.some((event) => event.type === 'capture')) {
+        a.stage = 'armed';
+        a.armedAt = timestampMs;
+        setCountdown(0);
+        setCaptureStage('armed');
+      } else if (state.phase === 'setup') {
         a.stage = 'positioning';
+        a.images.clear();
+        a.trace = [];
         setCountdown(0);
         setCaptureStage('positioning');
         return;
+      } else {
+        const remaining = Math.max(0, Math.ceil(COUNTDOWN_SECONDS - (timestampMs - a.countStartedAt) / 1000));
+        const canStart = centered && state.live && state.setup.checks.sideOn && state.setup.checks.standing;
+        setCountdown(remaining || (canStart ? 0 : 1));
+        if (remaining || !canStart) return;
+        a.stage = 'armed';
+        a.armedAt = timestampMs;
+        setCaptureStage('armed');
+        setShowGo(true);
+        signalGo();
+        session.handle?.perform?.();
+        return;
       }
-      const remaining = Math.max(0, Math.ceil(COUNTDOWN_SECONDS - (timestampMs - a.countStartedAt) / 1000));
-      setCountdown(remaining);
-      if (remaining) return;
-      a.stage = 'armed';
-      a.armedAt = timestampMs;
-      a.capturedAt = new Date().toISOString();
-      const initialImage = safeCapture(frame, state);
-      if (initialImage) a.images.set('start', initialImage);
-      const ankle = frame.landmarks?.[state.live?.side === 'right' ? 28 : 27];
-      a.anchor = ankle ? { x: ankle.x, y: ankle.y } : null;
-      setCaptureStage('armed');
-      setShowGo(true);
-      signalGo();
-      session.handle?.perform?.();
-      return;
     }
     if (timestampMs - a.armedAt >= 1000) setShowGo(false);
     if (timestampMs - a.armedAt > 20000) {
@@ -288,7 +366,7 @@ function App() {
         if (image) a.images.set(event.phase, image);
       }
       if (event.type === 'rep-discarded') {
-        clearAttempt('The full rep could not be tracked. Stand side-on with your feet and knees visible, then try again.');
+        clearAttempt(DISCARD_MESSAGES[event.reason] ?? 'The full rep could not be tracked. Stand side-on and try again.');
         break;
       }
       if (event.type === 'rep-complete') {
@@ -305,10 +383,19 @@ function App() {
             standingTorsoToLegRatio: rep.metrics.standingTorsoToLegRatio,
           };
           currentReference.current = next;
-          calibrationAnchor.current = a.anchor;
           setReference(next);
         }
-        setResult(makeEvidence({ rep, images: a.images, captureStartMs: a.armedAt, source: session.kind === 'demo' ? 'simulated' : 'webcam', camera: { width, height }, capturedAt: a.capturedAt, reference: { ...currentReference.current, establishedByThisRep: firstRep } }));
+        setResult(makeEvidence({
+          rep,
+          images: a.images,
+          motionTrace: makeMotionTrace(a.trace, a.referenceAt, rep.startedAtMs),
+          captureStartMs: a.referenceAt,
+          source: session.kind === 'demo' ? 'simulated' : 'webcam',
+          variant: a.variant,
+          camera: { width, height },
+          capturedAt: a.capturedAt,
+          reference: { ...currentReference.current, establishedByThisRep: firstRep },
+        }));
         clearAttempt('Rep captured. Review the snapshots and measurements below.');
         break;
       }
@@ -361,66 +448,145 @@ function App() {
     if (!recorder.current || attempt.current) return;
     enableAudio();
     setNotice('');
-    attempt.current = { stage: 'positioning', images: new Map() };
+    attempt.current = {
+      stage: 'positioning', images: new Map(), trace: [],
+      variant: recorder.current.kind === 'demo' ? 'bodyweight' : variant,
+    };
     setCaptureStage('positioning');
   }
 
-  const stepTitle = !active ? 'Set up your camera' : captureStage === 'positioning' ? 'Step into position' : captureStage === 'countdown' ? 'Get ready' : captureStage === 'armed' ? 'Perform one squat' : reference ? 'Ready for another rep?' : 'Capture one squat';
-  const cameraLabel = mode === 'loading' ? 'Starting camera' : mode === 'off' ? 'Camera off' : !view.setup.checks.inFrame ? 'Looking for pose' : stageActive ? 'Tracking' : view.setup.ready ? 'In position' : 'Adjust position';
+  function showGuide() {
+    const details = guide.current;
+    if (!details) return;
+    details.open = true;
+    details.querySelector('summary')?.focus();
+  }
+
+  const isRecording = captureStage === 'armed';
+  const isCounting = captureStage === 'countdown';
+  let cameraLabel = 'Camera off';
+  let cameraTone = 'off';
+  if (mode === 'loading') {
+    cameraLabel = 'Starting camera';
+    cameraTone = 'pending';
+  } else if (isRecording && view.live) {
+    cameraLabel = 'Capturing';
+    cameraTone = 'recording';
+  } else if (isRecording) {
+    cameraLabel = 'Reacquiring pose';
+    cameraTone = 'pending';
+  } else if (isCounting || view.setup.ready) {
+    cameraLabel = isCounting ? 'Countdown' : 'In position';
+    cameraTone = 'ready';
+  } else if (active) {
+    cameraLabel = view.setup.checks.inFrame ? 'Adjust position' : 'Looking for pose';
+    cameraTone = 'pending';
+  }
+  let movementPrompt = 'Finding your pose…';
+  let setupMessage = active ? view.setup.message : '';
+  if (isCounting) {
+    setupMessage = 'Starting stance saved. Move when you see Go.';
+  } else if (isRecording && view.live) {
+    if (view.live.finishing) {
+      movementPrompt = 'Hold briefly';
+      setupMessage = 'Stay upright briefly to finish the rep.';
+    } else if (view.phase === 'ascending') {
+      movementPrompt = 'Stand back up';
+      setupMessage = 'Return to your starting stance.';
+    } else {
+      movementPrompt = view.phase === 'ready' ? 'Perform one squat' : PHASE[view.phase];
+      setupMessage = 'Lower once, stand back up, and hold briefly.';
+    }
+  }
+  const previewWidth = active ? cameraSize.crop.width : 960;
+  const previewHeight = active ? cameraSize.height : 540;
 
   return <div className="app-shell">
     <header className="app-header">
       <div className="wordmark"><span className="brand-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 11h3l2.5-6 3.5 9 2-4h3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></span> COMPOSE</div>
-      <span className="header-title">Camera studio</span><a className="privacy-badge" href="./music.html">Music studio</a><span className="privacy-badge">Video stays on this device</span>
+      <a className="privacy-badge" href="./music.html">Music studio</a>
+      <span className="privacy-badge"><Icon name="shield" />Video stays on this device</span>
     </header>
     <main className="main">
-      <div className="page-intro"><p className="eyebrow">MOVEMENT LAB / 01</p><h1>Squat camera<span aria-hidden="true">.</span></h1><p className="intro-copy">Step into a side view and capture one bodyweight squat, hands-free.</p></div>
+      <div className="page-intro">
+        <div><h1>Squat camera</h1><p className="intro-copy">Capture one squat from the side.</p></div>
+        <button className="button button-link" onClick={showGuide}>Squat guide</button>
+      </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="studio-grid">
         <section className="camera-panel" aria-label="Camera preview">
-          <div className="panel-heading"><h2 className="panel-title">Camera preview</h2><span className="camera-status" data-tone={active && view.live ? 'ready' : mode === 'loading' ? 'pending' : 'off'}>{cameraLabel}</span></div>
-          <div className="viewport" style={{ aspectRatio: `${cameraSize.width} / ${cameraSize.height}` }}>
-            <video ref={cameraVideo} className="camera-video" hidden={mode !== 'camera'} muted playsInline aria-label="Live side view" />
-            <canvas ref={demoVideo} className="demo-video" hidden={mode !== 'demo'} aria-label="Simulated side view" />
-            <canvas ref={overlay} className="pose-overlay" hidden={!active} aria-hidden="true" />
-            {!active && <div className="empty-camera"><span className="empty-camera-icon"><CameraIcon /></span><strong>{mode === 'loading' ? 'Starting pose tracking' : 'Your camera is off'}</strong><p>{mode === 'loading' ? 'Allow camera access if your browser asks.' : 'Start the camera to see your position.'}</p></div>}
-            {active && captureStage !== 'armed' && !view.setup.ready && <div className="frame-guide" aria-hidden="true"><span className="frame-guide-label">FIT YOUR FULL BODY</span></div>}
-            {active && <div className="phase-pill">{captureStage === 'armed' && view.phase === 'ready' ? 'Perform one squat' : (PHASE[view.phase] || 'Positioning')}</div>}
-            {mode === 'demo' && <div className="demo-tag">Simulated example</div>}
-            {countdown > 0 && <div className="countdown" aria-label={`Recording in ${countdown} seconds`}>{countdown}</div>}
-            {showGo && <div className="countdown" aria-hidden="true">Go</div>}
+          <div className="panel-heading"><h2 className="panel-title">Camera preview</h2><span className="camera-status" data-tone={cameraTone}>{cameraLabel}</span></div>
+          <div className="viewport-wrap">
+            <div className="viewport" data-idle={!active} style={{ aspectRatio: `${previewWidth} / ${previewHeight}`, '--source-ratio': previewWidth / previewHeight }}>
+              <video ref={cameraVideo} className="camera-video" hidden={mode !== 'camera'} muted playsInline aria-label="Centered live side view" style={{
+                width: `${cameraSize.width / cameraSize.crop.width * 100}%`,
+                left: `${-cameraSize.crop.left / cameraSize.crop.width * 100}%`,
+              }} />
+              <canvas ref={demoVideo} className="demo-video" hidden={mode !== 'demo'} aria-label="Simulated side view" />
+              <canvas ref={overlay} className="pose-overlay" hidden={!active} aria-hidden="true" />
+              {(!active || (!isRecording && !view.setup.ready)) && <div className="frame-guide" data-idle={!active} aria-hidden="true" />}
+              {!active && <div className="empty-camera">
+                <span className="empty-camera-icon"><CameraIcon size={34} /></span>
+                <strong>{mode === 'loading' ? 'Starting camera' : 'Ready when you are'}</strong>
+                <p>{mode === 'loading' ? 'Allow camera access if your browser asks.' : 'Set your laptop down, then step into the center.'}</p>
+                {mode === 'off' && <div className="empty-actions">
+                  <button className="button button-primary" onClick={startCamera}>Start camera</button>
+                  <button className="button button-viewfinder-link" onClick={startDemo}><Icon name="play" />Try simulated example</button>
+                </div>}
+              </div>}
+              {active && !showGo && !isCounting && <div className="phase-pill">
+                {isRecording ? movementPrompt : (result && !stageActive ? 'Rep captured' : view.setup.message)}
+              </div>}
+              {mode === 'demo' && <div className="demo-tag">Simulated example</div>}
+              {countdown > 0 && <div className="countdown" aria-label={`Recording in ${countdown} seconds`}>{countdown}</div>}
+              {showGo && <div className="countdown" aria-hidden="true">Go</div>}
+            </div>
           </div>
-          <div className="camera-controls">
-            {active || mode === 'loading' ? <button className="button button-stop" onClick={() => stop(mode === 'demo' ? 'Example stopped.' : 'Camera stopped.')}>{mode === 'demo' ? 'Stop example' : 'Stop camera'}</button> : <>
-              <button className="button button-primary" onClick={startCamera}><CameraIcon size={19}/> Start camera</button>
-              <button className="button button-secondary" onClick={startDemo}>Try simulated example</button>
-            </>}
+          {(active || mode === 'loading') && <div className="camera-controls">
+            <button className="button button-stop" onClick={() => stop()}>{mode === 'demo' ? 'Stop example' : 'Stop camera'}</button>
             {stageActive && <button className="button button-secondary" onClick={() => { clearAttempt('Rep capture cancelled.'); tracker.current.reset(); }}>Cancel rep</button>}
             {active && !stageActive && <button className="button button-secondary" onClick={() => { resetSetup(); setNotice('Camera setup reset.'); }}>Redo setup</button>}
             {active && <button className="button button-secondary" aria-pressed={soundEnabled} onClick={() => {
               playSound.current = !playSound.current;
               setSoundEnabled(playSound.current);
               enableAudio();
-            }}>Go sound: {soundEnabled ? 'on' : 'off'}</button>}
-          </div>
+            }}><Icon name={soundEnabled ? 'sound' : 'mute'} />Go sound: {soundEnabled ? 'on' : 'off'}</button>}
+          </div>}
         </section>
         <aside className="setup-panel" aria-labelledby="setup-title">
-          <div className="panel-heading"><span className="panel-title">Capture setup</span></div>
-          <p className="step-kicker">{captureStage === 'armed' ? '02 / RECORD' : '01 / POSITION'}</p><h2 id="setup-title">{stepTitle}</h2>
-          <p className="step-copy">{captureStage === 'armed' ? 'Start tall, then lower and stand back up once at a comfortable pace.' : 'Set the laptop on a stable surface and turn so the camera sees you from the side.'}</p>
-          {captureStage !== 'armed' && <ul className="checklist" aria-label="Camera setup checklist">{CHECKS.map(([key, title, hint]) => {
-            const passed = Boolean(view.setup.checks[key]);
-            return <li className="check-item" key={key} data-passed={passed}><span className="check-icon" aria-hidden="true">{passed ? '✓' : '·'}</span><span className="check-text"><strong>{title}<span className="visually-hidden">: {passed ? 'ready' : 'waiting'}</span></strong><small>{hint}</small></span></li>;
-          })}</ul>}
-          {active && captureStage !== 'armed' && <div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${view.setup.progress * 100}%` }} /></div>}
-          <p className="setup-hint" aria-live="polite">{notice || (captureStage === 'countdown' ? 'Hold your starting stance until the countdown finishes.' : captureStage === 'armed' ? (view.live ? 'Lower and stand again. Hold your start position briefly when you finish.' : 'Finding your pose again…') : active ? view.setup.message : 'The countdown starts when you’re in position. Your first full rep becomes your baseline.')}</p>
-          {active && !stageActive && <div className="setup-actions"><button className="button button-primary" onClick={startRep}>{reference ? 'Capture another rep' : 'Capture one rep'}</button><small>Step into frame. The countdown starts when you’re in position.</small></div>}
-          <PracticeGuide live={view.live} reference={reference} />
+          <h2 id="setup-title">{isRecording ? 'Perform one squat' : isCounting ? 'Get ready' : 'Set up your side view'}</h2>
+          <p className="step-copy">{isRecording ? 'Use a range that feels comfortable.' : 'The countdown starts when you’re in position.'}</p>
+          {!isRecording && <label className="example-control squat-variant">Squat type
+            <select value={mode === 'demo' ? 'bodyweight' : variant} disabled={stageActive || mode === 'demo' || mode === 'loading'} onChange={(event) => {
+              setVariant(event.currentTarget.value);
+              clearReference();
+            }}>
+              <option value="bodyweight">Bodyweight</option>
+              <option value="barbell">Barbell</option>
+            </select>
+          </label>}
+          {!isRecording && <ol className="checklist" aria-label="Camera setup checklist">{CHECKS.map(([key, title, hint], index) => {
+            const passed = key === 'steady' ? view.setup.ready : Boolean(view.setup.checks[key]);
+            return <li className="check-item" key={key} data-passed={passed}>
+              <span className="check-icon" aria-hidden="true">{passed ? <Icon name="check" /> : index + 1}</span>
+              <span className="check-text"><strong>{title}{active && <span className="visually-hidden">: {passed ? 'ready' : 'waiting'}</span>}</strong><small>{hint}</small></span>
+            </li>;
+          })}</ol>}
+          {active && captureStage === 'positioning' && view.setup.progress > 0 && <div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${view.setup.progress * 100}%` }} /></div>}
+          <p className="setup-hint" role="status">{notice || setupMessage}</p>
+          {active && !stageActive && <div className="setup-actions">
+            <button className="button button-primary" onClick={startRep}>{reference ? 'Capture another rep' : 'Capture one rep'}</button>
+            {result && <button className="button button-link" onClick={() => reviewTitle.current?.focus()}>Review rep</button>}
+          </div>}
+          <PracticeGuide live={view.live} reference={reference} guideRef={guide} />
         </aside>
       </div>
-      <RepResult result={result} reference={result?.reference} onClear={() => setResult(null)} />
+      {result && <RepResult key={result.id} result={result} titleRef={reviewTitle} onClear={() => {
+        setResult(null);
+        setNotice('Result cleared.');
+        guide.current?.querySelector('summary')?.focus();
+      }} />}
     </main>
-    <footer className="app-footer"><span>COMPOSE / CAMERA STUDIO</span><span>Bodyweight squat · Side view</span></footer>
   </div>;
 }
 
