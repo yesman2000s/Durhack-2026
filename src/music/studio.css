@@ -39,7 +39,7 @@ p, small { color: #bacac5; }
 .demo-results { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 14px; }
 .field { display: grid; gap: 5px; font-size: .85rem; color: #bacac5; }
 .field input { width: 9rem; }
-.field select, .field input, .demo-results button, .mute { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
+.field select, .field input, .demo-results button { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
 .credits { margin-top: 14px; font-size: .8rem; }
 .mixer, .exercise-detail {
   margin: 0 0 16px;
@@ -50,12 +50,9 @@ p, small { color: #bacac5; }
 }
 .transport { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .play { min-width: 88px; padding: 10px 14px; border: 0; border-radius: 8px; font-weight: 750; color: #101918; background: #b7f5cf; }
-.bars { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin: 18px 0; }
-.bars span { height: 5px; border-radius: 99px; background: #3a4d48; }
-.bars span[data-active="true"] { background: #b7f5cf; }
-.tracks, .segments { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.tracks li { display: grid; grid-template-columns: 1fr 76px; gap: 8px; }
+.tracks { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; }
 .track-select {
+  width: 100%;
   color: inherit;
   background: #202d2a;
   border: 1px solid #394946;
@@ -70,13 +67,3 @@ p, small { color: #bacac5; }
 .track-select[aria-pressed="true"] { border-color: var(--track-color); }
 .track-select small { display: block; margin-top: 3px; }
 .track-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--track-color); }
-.level { display: flex; gap: 4px; }
-.level i { width: clamp(8px, 2vw, 22px); height: 7px; border-radius: 4px; background: #435450; }
-.level i[data-earned="true"] { background: var(--track-color); }
-.mute { font-size: .82rem; padding-inline: 4px; }
-.mute[aria-pressed="true"] { color: #101918; background: var(--track-color); }
-.segments { margin-top: 14px; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)); }
-.segments li { border: 1px solid #455752; border-radius: 8px; padding: 9px; }
-.segments li[data-earned="true"] { border-color: var(--track-color); }
-.segments span { display: block; margin-top: 4px; color: #bacac5; font-size: .8rem; }
-.exercise-detail .next { margin-top: 12px; font-size: .9rem; }

@@ -15,11 +15,11 @@ Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use th
 
 ## Try the music studio
 
-Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Select hip-hop, EDM, or rock and click **Play**. Pick an exercise and enter a **Test streak**. **Mock success** applies that streak on the next bar, and **Mock failure** leaves the mix as it was. **Reset demo** restores the starting streaks and clears mutes. At day 1 a track plays the first bar of each four-bar phrase, at day 3 it plays the first two, and at day 4 it plays throughout. Exercise selection keeps the loop running.
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. The reward plays just that exercise’s instrument from the start through the furthest unlocked beat, then stops. Each day adds one beat at the song’s tempo. The excerpt has 112 beats and the streak counter can keep growing after all audio is unlocked. **Mock failure** leaves progress as it was and triggers no reward. **Reset demo** restores the starting streaks.
 
 The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
 
-The demo ships eight-bar excerpts of three Kevin MacLeod instrumentals, trimmed, looped and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). “Other instruments” is Demucs's residual instrument stem. The vocal estimate and near-silent guitar and piano estimates are excluded. Rock includes all five instrument tracks.
+The demo ships 28-bar excerpts of three Kevin MacLeod instrumentals, trimmed to the beat grid and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). “Other instruments” is Demucs's residual instrument stem. The vocal estimate and near-silent guitar and piano estimates are excluded. Rock includes all five instrument tracks.
 
 - Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
 - EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)
