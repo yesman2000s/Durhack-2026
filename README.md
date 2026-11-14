@@ -15,7 +15,7 @@ Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use th
 
 ## Try the music studio
 
-Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. The reward plays just that exercise’s part through the latest unlocked point, then stops. Day one plays a single sixteenth note (a quarter beat) and each additional day adds another sixteenth note. The 112-beat excerpts provide roughly 448 daily unlocks. The streak counter can keep growing after all audio is unlocked. **Mock failure** triggers no reward. **Reset demo** restores the starting streaks.
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. Only the selected exercise's streak updates. All unlocked parts start together from the same point in the recording, and each fades out at its own unlocked length. The mix ends when the longest part finishes. Each streak day adds one sixteenth note (a quarter beat) to its part. The 112-beat excerpts provide 448 daily unlocks. The streak counter can keep growing after all audio is unlocked. **Mock failure** triggers no reward. **Reset demo** restores the starting streaks.
 
 The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
 

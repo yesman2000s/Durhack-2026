@@ -21,8 +21,7 @@ function Studio() {
   const exercise = exercises.find(({ id }) => id === selected);
   const part = exercisePart(song, exercise);
   const streak = streaks[selected];
-  const beats = rewardBeats(streak, part);
-  const maxBeats = EXCERPT_BEATS - part.startBeat;
+  const beats = rewardBeats(streak);
   const validTestStreak = /^\d+$/.test(testStreak) && Number.isSafeInteger(Number(testStreak));
 
   useEffect(() => () => {
@@ -53,10 +52,13 @@ function Studio() {
     const next = applyExerciseResult(streaks, result);
     setStreaks(next);
     stopPlayback();
-    const length = rewardBeats(next[selected], part);
+    const mix = exercises.map((track) => ({
+      part: exercisePart(song, track),
+      beats: rewardBeats(next[track.id]),
+    })).filter(({ beats }) => beats > 0);
     const completed = exercise.name + ': streak ' + next[selected] + ' days.';
-    if (!length) {
-      setMessage(completed + ' No section unlocked yet.');
+    if (!mix.length) {
+      setMessage(completed + ' No music unlocked yet.');
       return;
     }
 
@@ -65,20 +67,23 @@ function Studio() {
     try {
       context.current ??= new AudioContext();
       await context.current.resume();
-      const key = song.id + '/' + part.stem;
-      if (!loadedStems.current.has(key)) {
-        loadedStems.current.set(key, await loadStem(context.current, song, part));
-      }
-      const stop = playReward(context.current, song, part, loadedStems.current.get(key), length, () => {
+      const parts = await Promise.all(mix.map(async ({ part, beats }) => {
+        const key = song.id + '/' + part.stem;
+        if (!loadedStems.current.has(key)) {
+          loadedStems.current.set(key, await loadStem(context.current, song, part));
+        }
+        return { buffer: loadedStems.current.get(key), beats };
+      }));
+      const stop = playReward(context.current, song, parts, () => {
         if (playback.current === stop) {
           playback.current = null;
           setPlaying(false);
-          setMessage(completed + ' Reward finished.');
+          setMessage(completed + ' Mix finished.');
         }
       });
       playback.current = stop;
       setPlaying(true);
-      setMessage(completed + ' Playing ' + part.name.toLowerCase() + '.');
+      setMessage(completed + ' Playing your unlocked mix.');
     } catch {
       setError('The reward audio could not play. Try Mock success again.');
     } finally {
@@ -103,7 +108,7 @@ function Studio() {
       <div className="studio-intro">
         <div>
           <h1>My composition</h1>
-          <p>Complete an exercise to hear all the audio you’ve unlocked for its instrument.</p>
+          <p>Complete any exercise to hear your unlocked parts together.</p>
         </div>
         <label className="field">Genre
           <select value={song.id} disabled={loading} onChange={(event) => {
@@ -133,7 +138,7 @@ function Studio() {
                 aria-controls="exercise-detail" disabled={loading} onClick={() => chooseExercise(track.id)}>
                 <span className="track-dot" aria-hidden="true" />
                 <span><strong>{track.name}</strong><small>{trackPart.name}</small></span>
-                <small>{rewardBeats(streaks[track.id], trackPart)} beats unlocked</small>
+                <small>{rewardBeats(streaks[track.id])} beats unlocked</small>
               </button>
             </li>;
           })}
@@ -144,8 +149,8 @@ function Studio() {
       <section id="exercise-detail" className="exercise-detail" aria-labelledby="exercise-title">
         <h2 id="exercise-title">{exercise.name} · {part.name}</h2>
         <p>{streak} {streak === 1 ? 'day' : 'days'} in a row</p>
-        <p>{beats} of {maxBeats} beats unlocked · {Number((beats * 60 / song.bpm).toFixed(2))} seconds</p>
-        {beats === maxBeats && <p>Full excerpt unlocked. Your streak can keep growing.</p>}
+        <p>{beats} of {EXCERPT_BEATS} beats unlocked · {Number((beats * 60 / song.bpm).toFixed(2))} seconds</p>
+        {beats === EXCERPT_BEATS && <p>Full excerpt unlocked. Your streak can keep growing.</p>}
         <div className="demo-results" role="group" aria-label="Mock backend results">
           <label className="field">Test streak (days)
             <input type="number" min="0" step="1" value={testStreak} disabled={loading}

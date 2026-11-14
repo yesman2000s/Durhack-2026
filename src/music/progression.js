@@ -11,13 +11,12 @@ export const demoStreaks = { squat: 3, 'step-up': 3, 'calf-raise': 1, 'wall-push
 export function exercisePart(song, exercise) {
   if (song.percussionParts) {
     switch (exercise.stem) {
-      case 'drums': return { stem: 'drums-low', name: 'Low percussion', startBeat: 0 };
-      case 'guitar': return { stem: 'drums-mid', name: 'Mid percussion', startBeat: 0 };
-      case 'piano': return { stem: 'drums-high', name: 'High percussion', startBeat: 0 };
+      case 'drums': return { stem: 'drums-low', name: 'Low percussion' };
+      case 'guitar': return { stem: 'drums-mid', name: 'Mid percussion' };
+      case 'piano': return { stem: 'drums-high', name: 'High percussion' };
     }
   }
-  const startBeat = { bass: song.bassLeadIn, guitar: song.guitarLeadIn }[exercise.stem] ?? 0;
-  return { stem: exercise.stem, name: exercise.instrument, startBeat };
+  return { stem: exercise.stem, name: exercise.instrument };
 }
 
 export function applyExerciseResult(streaks, result) {
