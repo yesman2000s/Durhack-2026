@@ -8,7 +8,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 h1, h2, p { margin: 0; }
-button, select { font: inherit; }
+button, select, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 :focus-visible { outline: 2px solid #b7f5cf; outline-offset: 4px; }
@@ -36,8 +36,11 @@ h1 { font-size: clamp(2rem, 6vw, 3.7rem); letter-spacing: -.055em; line-height: 
 h2 { font-size: 1.2rem; }
 p, small { color: #bacac5; }
 .studio-intro p, .transport p, .exercise-detail p { margin-top: 6px; }
-.demo-results { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.demo-results button, .mute { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
+.demo-results { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 14px; }
+.field { display: grid; gap: 5px; font-size: .85rem; color: #bacac5; }
+.field input { width: 9rem; }
+.field select, .field input, .demo-results button, .mute { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
+.credits { margin-top: 14px; font-size: .8rem; }
 .mixer, .exercise-detail {
   margin: 0 0 16px;
   border: 1px solid #394946;

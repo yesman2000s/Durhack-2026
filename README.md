@@ -15,9 +15,17 @@ Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use th
 
 ## Try the music studio
 
-Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Click **Play** and select an exercise to see its instrument and unlocked segments. With Squat selected, try **Mock failure**, then **Mock success**. The successful response reports a streak of four days, adding hi-hats at the next bar. The shared loop keeps running when you select another exercise.
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Select hip-hop, EDM, or rock and click **Play**. Pick an exercise and enter a **Test streak**. **Mock success** applies that streak on the next bar, and **Mock failure** leaves the mix as it was. **Reset demo** restores the starting streaks and clears mutes. At day 1 a track plays the first bar of each four-bar phrase, at day 3 it plays the first two, and at day 4 it plays throughout. Exercise selection keeps the loop running.
 
-The demo uses fixed results and a browser-synthesized instrumental. The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak. For a future imported beat, [Music AI Musical Stems](https://music.ai/modules/stem-separation/musical-stems/) can prepare individual instrument files and a separate vocal file for exclusion.
+The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
+
+The demo ships eight-bar excerpts of three Kevin MacLeod instrumentals, trimmed, looped and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). “Other instruments” is Demucs's residual instrument stem. The vocal estimate and near-silent guitar and piano estimates are excluded. Rock includes all five instrument tracks.
+
+- Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
+- EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)
+- Rock · [Jet Fueled Vixen](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1700079)
+
+All three recordings are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ## Run the Python version
 
