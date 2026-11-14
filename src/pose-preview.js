@@ -5,6 +5,7 @@ export function createPosePreview(canvas) {
   let frame;
   let side;
   let capturing;
+  let uncertain;
   let displayed;
   let drawId;
   let lastDraw;
@@ -13,7 +14,7 @@ export function createPosePreview(canvas) {
   function draw(now) {
     drawId = undefined;
     if (!frame) return;
-    if (now - lastPoseAt > 185) {
+    if (now - lastPoseAt > 240) {
       drawPose(canvas, { ...frame, landmarks: null }, side);
       displayed = null;
       return;
@@ -28,17 +29,18 @@ export function createPosePreview(canvas) {
       const blend = 1 - Math.exp(-dt / responseMs);
       return { ...target, x: previous.x + (target.x - previous.x) * blend, y: previous.y + (target.y - previous.y) * blend };
     });
-    drawPose(canvas, { ...frame, landmarks: displayed }, side, capturing);
+    drawPose(canvas, { ...frame, landmarks: displayed }, side, capturing, uncertain);
     drawId = requestAnimationFrame(draw);
   }
 
   return {
-    update(next, nextSide, nextCapturing) {
+    update(next, nextSide, nextCapturing, nextUncertain) {
       if (!next.landmarks?.length || !nextSide) return;
       if (!frame || nextSide !== side || frame.width !== next.width || frame.height !== next.height) displayed = null;
       frame = next;
       side = nextSide;
       capturing = nextCapturing;
+      uncertain = nextUncertain;
       lastPoseAt = performance.now();
       if (drawId === undefined) {
         lastDraw = lastPoseAt;

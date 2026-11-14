@@ -1,6 +1,16 @@
-export function centerCameraCrop(width, height) {
-  const cropWidth = Math.max(1, Math.min(width, Math.round(height * 0.95)));
+function centerCrop(width, height, ratio) {
+  const cropWidth = Math.max(1, Math.min(width, Math.round(height * ratio)));
   return { left: Math.floor((width - cropWidth) / 2), width: cropWidth };
+}
+
+export function centerCameraCrop(width, height) {
+  return centerCrop(width, height, 0.95);
+}
+
+// Give the model more horizontal room for the hips and torso to move while
+// keeping the same centered preview and full-image coordinate system.
+export function poseCameraCrop(width, height) {
+  return centerCrop(width, height, 1.25);
 }
 
 export function sourceLandmarks(landmarks, sourceWidth, crop) {

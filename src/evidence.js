@@ -1,4 +1,5 @@
 import { measureThighToShin, summarizeThighToShin } from './leg-proportions.js';
+import { exerciseInfo } from './exercises.js';
 
 export const PHASE_LABELS = {
   start: 'Standing', descent: 'Lowering', bottom: 'Bottom', ascent: 'Rising', finish: 'Standing again',
@@ -15,7 +16,7 @@ export function framePose(frame, live) {
   if (!live) return null;
   const offset = live.side === 'right' ? 1 : 0;
   const joints = Object.fromEntries(Object.entries({
-    nose: 0, shoulder: 11 + offset, hip: 23 + offset, knee: 25 + offset,
+    nose: 0, shoulder: 11 + offset, elbow: 13 + offset, wrist: 15 + offset, hip: 23 + offset, knee: 25 + offset,
     ankle: 27 + offset, heel: 29 + offset, toe: 31 + offset,
   }).flatMap(([joint, index]) => {
     const point = frame.landmarks?.[index];
@@ -30,7 +31,8 @@ export function framePose(frame, live) {
     hipDropLegLengths: live.hipDropRatio,
     hipToKneeLegLengths: live.hipToKneeRatio,
     hipSpeedLegLengthsPerSec: live.hipSpeedLegLengthsPerSec,
-    thighToShinRatio: measureThighToShin(frame, live.side),
+    ...(Number.isFinite(live.range) ? { range: live.range, rangeUnit: live.rangeUnit, movementSpeedPerSec: live.movementSpeedPerSec }
+      : { thighToShinRatio: measureThighToShin(frame, live.side) }),
     joints,
   };
 }
@@ -49,15 +51,17 @@ export function captureImage(source, width, height, canvas = document.createElem
   return { url, width: canvas.width, height: canvas.height };
 }
 
-export function makeEvidence({ rep, images, motionTrace, captureStartMs, source, camera, capturedAt, reference, variant = 'bodyweight' }) {
+export function makeEvidence({ rep, images, motionTrace, captureStartMs, source, camera, capturedAt, reference, variant = 'bodyweight', trainingGuide = false }) {
+  const exercise = rep.exercise ?? 'squat';
+  const info = exerciseInfo(exercise);
   const movementStartOffsetMs = Math.round(rep.startedAtMs - captureStartMs);
   const returnOffsetMs = Math.round(rep.returnedAtMs - captureStartMs);
-  const metrics = {
-    ...rep.metrics,
+  const metrics = { ...rep.metrics };
+  if (exercise === 'squat') Object.assign(metrics, {
     kneeExcursionDeg: rep.metrics.startKneeAngleDeg - rep.metrics.kneeAngleAtBottomDeg,
     returnAngleErrorDeg: Math.abs(rep.metrics.startKneeAngleDeg - rep.metrics.finishKneeAngleDeg),
     thighToShinRatio: summarizeThighToShin(motionTrace?.frames ?? [], movementStartOffsetMs, returnOffsetMs, rep.metrics.standingThighToShinRatio),
-  };
+  });
   const snapshots = Object.keys(PHASE_LABELS).flatMap((phase) => {
     const frame = images.get(phase);
     if (!frame) return [];
@@ -66,21 +70,23 @@ export function makeEvidence({ rep, images, motionTrace, captureStartMs, source,
   return {
     schemaVersion: 1,
     id: globalThis.crypto.randomUUID(),
-    exercise: 'squat', variant, captureMode: 'single-rep',
+    exercise, variant, captureMode: 'single-rep',
     source, capturedAt, camera, trackingSide: rep.side,
+    ...(source === 'video' ? { videoStartOffsetMs: Math.round(captureStartMs) } : {}),
     movementStartOffsetMs,
     reference: reference ?? null,
+    ...(trainingGuide ? { trainingGuide: true } : {}),
     metrics,
-    cue: reference?.establishedByThisRep
+    cue: exercise !== 'squat' ? { code: 'OBSERVED_CYCLE', text: `The camera tracked one ${info.title.toLowerCase()} from the side.` } : reference?.establishedByThisRep
       ? { code: 'BASELINE_CAPTURED', text: 'This first squat is your baseline. Download it if you want to keep it for later.' }
       : { code: 'OBSERVED_CYCLE', text: 'The camera tracked a complete squat. You can compare the range with your first rep.' },
     observations: rep.cues,
-    practiceGuide: {
+    practiceGuide: exercise === 'squat' ? {
       descentTargetMs: 2000, ascentTargetMs: 1000, guidance: FORM_GUIDE,
       depthTarget: 'comfortable personal reference', torsoAngleTarget: null,
       proportionMethod: 'Projected ratios from source image pixels, without absolute height or distance calibration.',
       measurementLimits: 'Estimates from one side in 2D. Do not infer side-to-side knee alignment, spinal loading, overall safety, or balance.',
-    },
+    } : { guidance: info.guidance, measurementLimits: 'Range and speed are estimated from the camera image.' },
     snapshots,
     ...(motionTrace ? { motionTrace } : {}),
   };
@@ -97,7 +103,7 @@ export function downloadEvidence(evidence) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `compose-squat-${evidence.id.slice(0, 8)}.json`;
+  link.download = `compose-${evidence.exercise ?? 'squat'}-${evidence.id.slice(0, 8)}.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

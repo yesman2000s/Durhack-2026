@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { centerCameraCrop, poseInCenter, sourceLandmarks } from '../src/camera-crop.js';
+import { centerCameraCrop, poseCameraCrop, poseInCenter, sourceLandmarks } from '../src/camera-crop.js';
 
 test('maps the centered landscape crop to the full snapshot without stretching it', () => {
   const crop = centerCameraCrop(1280, 720);
@@ -32,4 +32,15 @@ test('the setup guide accepts a central stance and leaves portrait cameras uncha
   assert.deepEqual(portraitCrop, { left: 0, width: 450 });
   assert.equal(poseInCenter(landmarks, 450, portraitCrop), true);
   assert.equal(sourceLandmarks(landmarks, 450, portraitCrop), landmarks);
+});
+
+test('inference can see limbs beyond the tighter preview without shifting capture coordinates', () => {
+  const view = centerCameraCrop(1280, 720);
+  const inference = poseCameraCrop(1280, 720);
+  assert.deepEqual(inference, { left: 190, width: 900 });
+  const [point] = sourceLandmarks([{ x: 0.1, y: 0.5, visibility: 0.9 }], 1280, inference);
+  assert.equal(point.x * 1280, 280);
+  assert.ok(point.x * 1280 < view.left);
+  assert.equal(point.visibility, 0.9);
+  assert.deepEqual(poseCameraCrop(450, 800), { left: 0, width: 450 });
 });

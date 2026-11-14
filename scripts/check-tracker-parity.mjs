@@ -37,6 +37,43 @@ const fixtures = [
   { name: "long loss", loss: [3440, 3920], expectedDiscard: "tracking-gap" },
   { name: "right profile", mirror: true, expectedSide: "right" },
   {
+    name: "body moves to a new spot during the squat",
+    interval: 80,
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time < 3520) return;
+      for (const joint of landmarks) {
+        joint.x += 0.08;
+        joint.y -= 0.09;
+      }
+    },
+  },
+  {
+    name: "near foot relocates and stays in its new position on the return",
+    interval: 80,
+    expectedSide: "right",
+    mirror: true,
+    adjust(landmarks, _depth, time) {
+      if (time >= 3440) for (const index of [27, 29, 31]) landmarks[index].x += 0.054;
+    },
+  },
+  {
+    name: "repositioning a lifted foot alone does not start a rep",
+    interval: 80,
+    points(_depth, time) {
+      const landmarks = demoLandmarks(0);
+      const progress = Math.max(0, Math.min(1, (time - 2480) / 920));
+      const lift = Math.sin(Math.PI * progress);
+      for (const index of [27, 29, 31]) {
+        landmarks[index].x += 0.055 * progress;
+        landmarks[index].y -= 0.10 * lift;
+      }
+      landmarks[25].x += 0.075 * lift;
+      landmarks[28].visibility = 0.2;
+      return landmarks;
+    },
+  },
+  {
     name: "slightly oblique profile",
     armedAt: 2240,
     expectedSide: "left",
@@ -150,17 +187,18 @@ const fixtures = [
     allowDiscard: true,
   },
   {
-    name: "soft-kneed side setup with sway and isolated missing frames",
+    name: "soft-kneed setup with sway, missing frames and overlapping feet",
     interval: 80,
     until: 7800,
     armedAt: 2800,
-    misses: [640, 1440],
+    misses: [320, 640],
     expectedSide: "left",
     points(_depth, time) {
       const landmarks = demoLandmarks(0.30 + 0.70 * frameDepth(time - 2800));
       for (const [near, span] of [[11, 0.36], [23, 0.27], [25, 0.16]]) {
         landmarks[near + 1].x = landmarks[near].x - span * 193 / 960;
       }
+      for (const index of [29, 30, 31, 32]) landmarks[index].visibility = 0.25;
       return landmarks.map((joint) => ({
         ...joint,
         x: joint.x + 0.004 * Math.sin(time / 330),
@@ -182,12 +220,92 @@ const fixtures = [
     loss: [3440, 3680],
     expectedSide: "left",
   },
+  {
+    name: "isolated front-like pose before a short tracking gap",
+    interval: 80,
+    misses: [3920, 4000],
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time !== 3840) return;
+      for (const [near, span] of [[11, 0.46], [23, 0.34], [25, 0.34]]) {
+        landmarks[near + 1].x = landmarks[near].x - span * 193 / 960;
+      }
+    },
+  },
+  {
+    name: "short ambiguous rotation while the same planted leg descends",
+    interval: 80,
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time < 3280 || time > 3520) return;
+      landmarks[12].x = landmarks[11].x - 0.46 * 193 / 960;
+      landmarks[24].x = landmarks[23].x - 0.34 * 193 / 960;
+    },
+  },
+  {
+    name: "weak near leg survives short bottleneck without changing sides",
+    interval: 80,
+    until: 7600,
+    misses: [4000, 4080, 4160],
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time !== 3840 && time !== 3920) return;
+      landmarks[25].visibility = 0.27;
+      for (const far of [24, 26, 28]) landmarks[far].visibility = 0.98;
+    },
+  },
+  {
+    name: "short burst of implausible leg geometry during the bottom",
+    interval: 80,
+    until: 7600,
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time < 4000 || time > 4320) return;
+      for (const index of [25, 27, 29, 31]) {
+        landmarks[index].x = landmarks[23].x + 0.30 * (landmarks[index].x - landmarks[23].x);
+        landmarks[index].y = landmarks[23].y + 0.30 * (landmarks[index].y - landmarks[23].y);
+      }
+    },
+  },
+  {
+    name: "shorter estimated legs after returning upright",
+    interval: 80,
+    until: 7400,
+    expectedSide: "left",
+    adjust(landmarks, _depth, time) {
+      if (time < 5760) return;
+      for (const [hip, lower] of [[23, [25, 27, 29, 31]], [24, [26, 28, 30, 32]]]) {
+        for (const index of lower) {
+          landmarks[index].y = landmarks[hip].y + 0.78 * (landmarks[index].y - landmarks[hip].y);
+        }
+      }
+    },
+  },
+  {
+    name: "immediate rearm during a shortened standing pose",
+    interval: 80,
+    until: 12600,
+    rearm: true,
+    expectedSide: "left",
+    points(depth, time) {
+      return demoLandmarks(time < 6200 ? depth : frameDepth(time - 7360));
+    },
+    adjust(landmarks, _depth, time) {
+      if (time < 5760 || time >= 6640) return;
+      for (const [hip, lower] of [[23, [25, 27, 29, 31]], [24, [26, 28, 30, 32]]]) {
+        for (const index of lower) {
+          landmarks[index].y = landmarks[hip].y + 0.78 * (landmarks[index].y - landmarks[hip].y);
+        }
+      }
+    },
+  },
 ];
-const cases = fixtures.map(({ name, loss, misses = [], mirror, interval = 40, until = 6500, armedAt = 0, points = demoLandmarks, adjust, expectedSide, expectedDiscard, allowDiscard }) => {
+const cases = fixtures.map(({ name, loss, misses = [], mirror, interval = 40, until = 6500, armedAt = 0, points = demoLandmarks, adjust, expectedSide, expectedDiscard, allowDiscard, rearm = false }) => {
   const frames = [];
   const tracker = new SquatTracker();
   const expected = [];
   const intervals = Array.isArray(interval) ? interval : [interval];
+  let isArmed = true;
   for (let time = 0, index = 0; time < until; time += intervals[index++ % intervals.length]) {
     const timestampMs = Math.round(time);
     const missing = misses.includes(timestampMs) || (loss && timestampMs >= loss[0] && timestampMs < loss[1]);
@@ -195,12 +313,18 @@ const cases = fixtures.map(({ name, loss, misses = [], mirror, interval = 40, un
     let landmarks = missing ? null : points(depth, timestampMs);
     if (landmarks && adjust) adjust(landmarks, depth, timestampMs);
     if (landmarks && mirror) landmarks = mirrorSide(landmarks);
-    const frame = { landmarks, timestampMs, width: 960, height: 540, armed: timestampMs >= armedAt };
+    const frame = { landmarks, timestampMs, width: 960, height: 540, armed: timestampMs >= armedAt && isArmed };
     frames.push(frame);
-    expected.push(tracker.update(frame));
+    const state = tracker.update(frame);
+    expected.push(state);
+    if (rearm) {
+      isArmed ||= state.setup.ready;
+      if (state.events.some(({ type }) => type === "rep-complete")) isArmed = false;
+    }
   }
   const events = expected.flatMap((state) => state.events);
   assert.equal(events.find(({ type }) => type === "rep-complete")?.rep.side, expectedSide, name);
+  if (rearm) assert.equal(events.filter(({ type }) => type === "rep-complete").length, 2, name);
   if (!allowDiscard) assert.equal(events.find(({ type }) => type === "rep-discarded")?.reason, expectedDiscard, name);
   return { name, frames, expected };
 });

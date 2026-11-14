@@ -28,3 +28,33 @@ test('replay bridges short gaps and leaves missing portions of the movement blan
   assert.equal(poseAtTime(frames, 300), null);
   assert.deepEqual(poseAtTime(frames, 500).hip, first);
 });
+
+test('replay eases into a measured reversal without overshooting or changing the trace', () => {
+  const frames = [0.2, 0.5, 0.75, 0.5].map((y, index) => ({
+    offsetMs: [0, 75, 170, 265][index],
+    joints: { hip: { x: 0.5, y, visibility: 0.9 } },
+  }));
+  const original = structuredClone(frames);
+  const beforeBottom = poseAtTime(frames, 160).hip.y;
+  assert.ok(beforeBottom > 0.73 && beforeBottom < 0.75);
+  let last = 0.5;
+  for (let time = 76; time <= 170; time++) {
+    const { y } = poseAtTime(frames, time).hip;
+    assert.ok(y >= last && y <= 0.75);
+    last = y;
+  }
+  assert.equal(poseAtTime(frames, 170).hip.y, 0.75);
+  assert.ok(poseAtTime(frames, 180).hip.y > 0.73);
+  assert.deepEqual(frames, original);
+});
+
+test('replay leaves an unreliable joint out of interpolated poses', () => {
+  const joint = { x: 0.25, y: 0.5, visibility: 0.9 };
+  const frames = [
+    { offsetMs: 0, joints: { hip: joint, knee: joint } },
+    { offsetMs: 80, joints: { hip: { ...joint, y: 0.6 }, knee: { ...joint, visibility: 0.2 } } },
+  ];
+  const joints = poseAtTime(frames, 40);
+  assert.ok(joints.hip);
+  assert.equal(joints.knee, undefined);
+});

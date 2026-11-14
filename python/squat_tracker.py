@@ -12,14 +12,18 @@ SIDES = {
     "right": (12, 24, 26, 28, 30, 32),
 }
 PHASE_ORDER = ("start", "descent", "bottom", "ascent", "finish")
-CALIBRATION_MS = 2000
+CALIBRATION_MS = 1000
+MIN_CALIBRATION_SAMPLES = 7
 CALIBRATION_GAP_MS = 220
 STANDING_REFERENCE_MS = 450
 FINISH_HOLD_MS = 500
 FINISH_GRACE_MS = 250
 MAX_FRAME_GAP_MS = 300
 MAX_CAPTURE_GAP_MS = 400
-FOOT_SHIFT_MS = 150
+MAX_REACQUIRE_GAP_MS = 500
+WEAK_CONTINUITY_MS = 250
+TURN_CONFIRM_MS = 200
+DESCENT_TURN_CONFIRM_MS = 320
 MAX_REP_MS = 20000
 
 
@@ -39,16 +43,15 @@ class Sample:
     shin_lean: float
     hip_y: float
     knee_y: float
-    ankle_x: float
     ankle_y: float
     leg_length: float
     thigh_length: float
     shin_length: float
     torso_length: float | None
-    heel_x: float | None = None
-    heel_y: float | None = None
-    toe_x: float | None = None
-    toe_y: float | None = None
+    other_ankle_y: float | None = None
+    support_y: float | None = None
+    support_other_y: float | None = None
+    hip_from_support: float | None = None
     time: float = 0
     speed: float = 0
     raw: Sample | None = None
@@ -60,8 +63,9 @@ class Sample:
 class Baseline:
     side: str
     hip_y: float
-    ankle_x: float
-    ankle_y: float
+    support_y: float
+    support_other_y: float | None
+    hip_from_support: float
     leg_length: float
     knee_angle: float
     thigh_length: float
@@ -74,12 +78,9 @@ class Baseline:
 class StandingReference:
     knee_angle: float
     hip_y: float
-    ankle_x: float
-    ankle_y: float
-    heel_x: float | None = None
-    heel_y: float | None = None
-    toe_x: float | None = None
-    toe_y: float | None = None
+    support_y: float
+    support_other_y: float | None
+    hip_from_support: float
     time: float = 0
 
 
@@ -87,8 +88,10 @@ class StandingReference:
 class Pose:
     sample: Sample | None = None
     side_on: bool = False
-    shifted_foot: bool = False
     too_far: bool = False
+    weak: bool = False
+    implausible_scale: bool = False
+    turn_corroborated: bool = False
     reason: str | None = None
 
 
@@ -124,6 +127,10 @@ def _distance(a, b):
     return hypot(a.x - b.x, a.y - b.y)
 
 
+def _upright_hip_height(sample):
+    return -sample.hip_from_support / sample.leg_length
+
+
 def _joint_angle(first, joint, last):
     ax, ay = first.x - joint.x, first.y - joint.y
     bx, by = last.x - joint.x, last.y - joint.y
@@ -152,26 +159,31 @@ def _point_at(landmarks, index, width, height):
     return Point(x * width, y * height, 1 if visibility is None else visibility)
 
 
-def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False, foot_anchor=None):
+def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False):
     joints = {
         side: [_point_at(landmarks, index, width, height) for index in indices]
         for side, indices in SIDES.items()
     }
-    minimum_visibility = 0.35 if tracking else 0.55
     valid = [
         side for side, points in joints.items()
-        if all(point and point.visibility >= minimum_visibility for point in points[1:4])
+        if all(point and point.visibility >= 0.55 for point in points[1:4])
     ]
-    if not valid or (fixed_side and fixed_side not in valid):
-        return Pose(reason="joints" if landmarks else "no-pose")
-    side = fixed_side or max(valid, key=lambda choice: sum(point.visibility for point in joints[choice][1:4]))
+    side = fixed_side or max(valid, key=lambda choice: sum(point.visibility for point in joints[choice][1:4]), default="right")
     shoulder, hip, knee, ankle, heel, toe = joints[side]
+    leg_confidence = [point.visibility if point else 0 for point in (hip, knee, ankle)]
+    weak = (
+        tracking and min(leg_confidence) < 0.35 and min(leg_confidence) >= 0.25
+        and sum(confidence >= 0.55 for confidence in leg_confidence) >= 2
+    )
+    visible_chain = (weak or min(leg_confidence) >= 0.35) if tracking else side in valid
+    if not visible_chain:
+        return Pose(reason="joints" if landmarks else "no-pose")
     thigh, shank = _distance(hip, knee), _distance(knee, ankle)
-    if min(thigh, shank) < height * 0.035:
-        return Pose(reason="joints")
-    if tracking and any(not 0.5 <= ratio <= 1.6 for ratio in (
+    min_ratio, max_ratio = (0.7, 1.3) if weak else (0.5, 1.6)
+    implausible_scale = tracking and any(not min_ratio <= ratio <= max_ratio for ratio in (
         thigh / baseline.thigh_length, shank / baseline.shin_length,
-    )):
+    ))
+    if not tracking and min(thigh, shank) < height * 0.035:
         return Pose(reason="joints")
     leg_length = thigh + shank
     margin_x = 0 if tracking else width * 0.025
@@ -209,12 +221,15 @@ def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False
     too_far = False
     if tracking:
         side_on = not ((hip_span or 0) > 0.39 or ((hip_span or 0) > 0.29 and ((shoulder_span or 0) > 0.38 or (knee_span or 0) > 0.32)))
+        if implausible_scale and side_on:
+            return Pose(reason="shape" if min(leg_confidence) >= 0.55 else "joints")
     else:
         nose = _point_at(landmarks, 0, width, height)
         feet = [point for point in (heel, toe) if point and point.visibility >= 0.5]
         if not nose or nose.visibility < 0.45:
             return Pose(reason="head")
-        if not feet:
+        # A clear ankle with room for the foot also works when heel and toe overlap.
+        if not feet and not (ankle.visibility >= 0.65 and height - margin_y - ankle.y >= leg_length * 0.12):
             return Pose(reason="feet")
         if not shoulder:
             return Pose(reason="shoulder")
@@ -228,34 +243,21 @@ def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False
         else:
             available_span = hip_span if hip_span is not None else shoulder_span
             side_on = available_span <= 0.20 if available_span is not None else abs(nose.x - shoulder.x) / leg_length >= 0.09
-        standing_height = max(ankle.y, *(point.y for point in feet)) - nose.y
+        standing_height = max((ankle.y, *(point.y for point in feet))) - nose.y
         too_far = not baseline and standing_height < height * 0.38 and leg_length < height * 0.24
 
-    heel_x, heel_y = (heel.x, heel.y) if heel and heel.visibility >= 0.55 else (None, None)
-    toe_x, toe_y = (toe.x, toe.y) if toe and toe.visibility >= 0.55 else (None, None)
-    shifted_foot = False
-    if baseline:
-        anchor = foot_anchor or baseline
-        dx = (ankle.x - anchor.ankle_x) / baseline.leg_length
-        dy = (ankle.y - anchor.ankle_y) / baseline.leg_length
-
-        def corroborates_shift(current, name, shift):
-            previous = getattr(anchor, name, None)
-            direction = 1 if shift > 0 else -1
-            return previous is not None and current is not None and (current - previous) * direction > baseline.leg_length * 0.14
-
-        shifted_foot = (
-            abs(dx) > (0.34 if tracking else 0.22)
-            or (tracking and abs(dx) > 0.22 and (corroborates_shift(heel_x, "heel_x", dx) or corroborates_shift(toe_x, "toe_x", dx)))
-            or abs(dy) > (0.32 if tracking else 0.15)
-            or (tracking and abs(dy) > 0.18 and (corroborates_shift(heel_y, "heel_y", dy) or corroborates_shift(toe_y, "toe_y", dy)))
-        )
+    other_ankle = joints["right" if side == "left" else "left"][3]
     sample = Sample(
         side, _joint_angle(hip, knee, ankle), _joint_angle(near_shoulder, hip, knee) if near_shoulder else None,
         _lean_angle(near_shoulder, hip) if near_shoulder else None, _lean_angle(knee, ankle),
-        hip.y, knee.y, ankle.x, ankle.y, leg_length, thigh, shank, torso, heel_x, heel_y, toe_x, toe_y,
+        hip.y, knee.y, ankle.y, leg_length, thigh, shank, torso,
+        other_ankle.y if other_ankle and other_ankle.visibility >= 0.55 and in_frame(other_ankle) else None,
     )
-    return Pose(sample=sample, side_on=side_on, shifted_foot=shifted_foot, too_far=too_far)
+    return Pose(
+        sample=sample, side_on=side_on, too_far=too_far, weak=weak,
+        implausible_scale=implausible_scale,
+        turn_corroborated=(shoulder_span or 0) > 0.38 and (hip_span or 0) > 0.29 and (knee_span or 0) > 0.32,
+    )
 
 
 def _make_baseline(samples):
@@ -268,10 +270,10 @@ def _make_baseline(samples):
         "standingThighToShinRatio": round(thigh_length / shin_length, 3),
         "standingTorsoToLegRatio": round(torso_length / leg_length, 3),
     }
-    return Baseline(
-        samples[0].side, mean("hip_y"), mean("ankle_x"), mean("ankle_y"), leg_length, mean("knee_angle"),
-        thigh_length, shin_length, torso_length, proportions,
-    )
+    stand = _standing_reference(samples)
+    return Baseline(samples[0].side, stand.hip_y, stand.support_y, stand.support_other_y,
+                    stand.hip_from_support, leg_length, stand.knee_angle, thigh_length, shin_length,
+                    torso_length, proportions)
 
 
 def _capture(rep, phase, sample, events):
@@ -282,15 +284,42 @@ def _capture(rep, phase, sample, events):
 
 def _standing_reference(samples):
     def mean(key):
-        values = [getattr(sample, key) for sample in samples if getattr(sample, key) is not None and isfinite(getattr(sample, key))]
+        values = []
+        for sample in samples:
+            value = getattr(sample, key)
+            if value is None or not isfinite(value):
+                continue
+            values.append(value)
         return sum(values) / len(values) if values else None
 
-    keys = ("knee_angle", "hip_y", "ankle_x", "ankle_y", "heel_x", "heel_y", "toe_x", "toe_y")
+    keys = ("knee_angle", "hip_y", "support_y", "support_other_y", "hip_from_support")
     return StandingReference(*(mean(key) for key in keys))
 
 
 def _hip_drop_from(sample, reference, leg_length):
-    return ((sample.hip_y - sample.ankle_y) - (reference.hip_y - reference.ankle_y)) / leg_length
+    return (sample.hip_from_support - reference.hip_from_support) / leg_length
+
+
+def _support_height(sample, reference, leg_length):
+    if reference is None:
+        return sample.ankle_y
+    near_shift = (sample.ankle_y - reference.support_y) / leg_length
+    other_shift = ((sample.other_ankle_y - reference.support_other_y) / leg_length
+                   if reference.support_other_y is not None and sample.other_ankle_y is not None else None)
+    # Prefer the steadier foot when one lifts. Let a coherent translation of
+    # both feet move the reference so it does not look like a change in depth.
+    separate_feet = (other_shift is not None
+                     and abs(near_shift - other_shift) > (0.02 if near_shift < other_shift else 0.10))
+    shift = other_shift if separate_feet and abs(other_shift) < abs(near_shift) else near_shift
+    hip_shift = (sample.hip_y - reference.hip_y) / leg_length
+    shortened_upright_leg = (
+        shift < -0.15 and hip_shift < 0.12
+        and sample.knee_angle >= reference.knee_angle - 10 and sample.leg_length < leg_length * 0.95
+    )
+    raised_only_visible_foot = other_shift is None and shift < -0.02 and abs(hip_shift) < 0.08
+    low_ankle_estimate = other_shift is None and 0.15 < shift < 0.29 and hip_shift > max(0.12, shift * 1.15)
+    return (reference.support_y if shortened_upright_leg or raised_only_visible_foot or low_ankle_estimate
+            else reference.support_y + shift * leg_length)
 
 
 def _motion_candidate(rep, sample, events):
@@ -331,8 +360,8 @@ def _format_rep(rep, finish, baseline):
     end = rep.first_standing
     descent_ms = bottom.time - start.time
     ascent_ms = end.time - rise.time
-    drop = (bottom.hip_y - start.hip_y) / baseline.leg_length
-    rise_distance = (bottom.hip_y - end.hip_y) / baseline.leg_length
+    drop = _hip_drop_from(bottom, start, baseline.leg_length)
+    rise_distance = _hip_drop_from(bottom, end, baseline.leg_length)
     hip_to_knee = (bottom.hip_y - bottom.knee_y) / baseline.leg_length
     depth_label = "about level with"
     if hip_to_knee < -0.045:
@@ -385,13 +414,16 @@ class SquatTracker:
         self.previous = None
         self.last_time = None
         self.last_valid_time = None
+        self.previous_was_missing = False
+        self.weak_at = None
         self.standing_samples = []
         self.locked_standing = None
         self.locked_standing_at = None
         self.last_standing_at = None
+        self._reset_standing_observation()
+        self.capture_standing_ready = False
         self.attempt = None
         self.onset_at = None
-        self.ankle_shift_at = None
         self.turn_at = None
         self.next_rep_id = 1
 
@@ -401,12 +433,13 @@ class SquatTracker:
         events = []
         checks = {"inFrame": False, "sideOn": False, "standing": False, "steady": False}
 
-        def state(message, live=None, progress=0, ready=False):
+        def state(message, live=None, progress=0, ready=False, continuity_side=None):
             return {
                 "phase": self.phase,
                 "setup": {"checks": checks, "ready": ready, "message": message, "progress": progress},
                 "live": live,
                 "events": events,
+                "continuitySide": continuity_side,
             }
 
         if (not isfinite(timestamp_ms) or (self.last_time is not None and timestamp_ms <= self.last_time)
@@ -418,8 +451,13 @@ class SquatTracker:
             if self.attempt:
                 self._discard(events, "cancelled")
             self.onset_at = None
+            self.capture_standing_ready = False
+        elif self.standing_observed_ms >= CALIBRATION_MS:
+            self.capture_standing_ready = True
         if self.baseline and self.last_valid_time is not None:
-            max_gap = MAX_CAPTURE_GAP_MS if self.attempt and self.turn_at is None else MAX_FRAME_GAP_MS
+            max_gap = MAX_FRAME_GAP_MS
+            if self.attempt:
+                max_gap = MAX_REACQUIRE_GAP_MS if self.weak_at is not None else MAX_CAPTURE_GAP_MS
             if timestamp_ms - self.last_valid_time > max_gap:
                 self._lose_calibration(events, "tracking-gap")
         if self.attempt and timestamp_ms - self.attempt.start.time > MAX_REP_MS:
@@ -432,24 +470,51 @@ class SquatTracker:
             self._lock_reference(previous_frame_time if previous_frame_time is not None else timestamp_ms)
         side = self.baseline.side if self.baseline else self.calibration[0].side if self.calibration else None
         tracking = bool(armed and self.baseline)
-        foot_anchor = (self.attempt.start if self.attempt else self.locked_standing) if tracking else self.baseline
-        pose = _inspect_pose(landmarks, width, height, side, self.baseline, tracking, foot_anchor)
+        reference = (self.attempt.start if self.attempt else self.locked_standing) or self.baseline
+        pose = _inspect_pose(landmarks, width, height, side, self.baseline, tracking)
+        if pose.sample:
+            sample = pose.sample
+            sample.support_y = _support_height(sample, reference, self.baseline.leg_length if self.baseline else None)
+            sample.support_other_y = (
+                reference.support_other_y + (sample.support_y - reference.support_y)
+                if reference and reference.support_other_y is not None else sample.other_ankle_y
+            )
+            sample.hip_from_support = sample.hip_y - sample.support_y
         checks["inFrame"] = pose.sample is not None and not pose.too_far
         checks["sideOn"] = checks["inFrame"] and pose.side_on
-        if pose.shifted_foot:
-            if self.ankle_shift_at is None:
-                self.ankle_shift_at = timestamp_ms
+        clear_turn = tracking and pose.sample and not pose.weak and not pose.side_on
+        if clear_turn:
+            if self.turn_at is None:
+                self.turn_at = timestamp_ms
         else:
-            self.ankle_shift_at = None
-        # A confirmed turn cannot use the extra recovery time for hidden landmarks.
-        if not tracking or checks["sideOn"]:
             self.turn_at = None
-        elif pose.sample and self.turn_at is None:
-            self.turn_at = timestamp_ms
-        sustained_foot_shift = self.ankle_shift_at is not None and timestamp_ms - self.ankle_shift_at >= FOOT_SHIFT_MS
-        if not checks["sideOn"] or pose.shifted_foot:
-            message = self._invalid_pose(pose, timestamp_ms, events, tracking, sustained_foot_shift)
-            return state(message, progress=1 if self.baseline else self._calibration_progress())
+        since_strong = timestamp_ms - self.last_valid_time if self.last_valid_time is not None else float("inf")
+        previous_raw = self.previous.raw if self.previous else None
+        descent_turn = (
+            clear_turn and self.phase == "descending" and previous_raw
+            and not pose.turn_corroborated and not pose.implausible_scale
+            and since_strong <= MAX_CAPTURE_GAP_MS
+            and _hip_drop_from(pose.sample, previous_raw, self.baseline.leg_length) >= 0.012
+            and previous_raw.knee_angle - pose.sample.knee_angle >= 4
+        )
+        turn_limit = DESCENT_TURN_CONFIRM_MS if descent_turn else TURN_CONFIRM_MS
+        sustained_turn = clear_turn and timestamp_ms - self.turn_at >= turn_limit
+        weak_continuity = (
+            pose.weak and self.attempt and checks["sideOn"]
+            and self.previous and since_strong <= WEAK_CONTINUITY_MS
+            and abs(_hip_drop_from(pose.sample, self.previous.raw, self.baseline.leg_length)) <= 0.05 + 2.2 * since_strong / 1000
+            and abs(pose.sample.knee_angle - self.previous.raw.knee_angle) <= 12 + 350 * since_strong / 1000
+        )
+        shape_continuity = (pose.reason == "shape" and self.attempt and self.attempt.depth_confirmed
+                            and since_strong <= WEAK_CONTINUITY_MS)
+        if clear_turn:
+            self.weak_at = None
+        elif weak_continuity or shape_continuity:
+            self.weak_at = timestamp_ms
+        if not checks["sideOn"] or pose.weak:
+            message = self._invalid_pose(pose, timestamp_ms, events, tracking, sustained_turn, weak_continuity or descent_turn)
+            return state(message, progress=self._standing_progress() if self.baseline else self._calibration_progress(),
+                         continuity_side=pose.sample.side if not sustained_turn and (weak_continuity or descent_turn) else None)
 
         raw = pose.sample
         raw.time = timestamp_ms
@@ -457,20 +522,22 @@ class SquatTracker:
         if self.attempt:
             self.attempt.max_gap = max(self.attempt.max_gap, timestamp_ms - self.last_valid_time)
         self.last_valid_time = timestamp_ms
+        self.weak_at = None
         previous = self.previous
         self._smooth(sample)
         self.previous = sample
+        self.previous_was_missing = False
+        checks["standing"] = (
+            sample.knee_angle >= 145 and (sample.knee_y - sample.hip_y) / sample.leg_length >= 0.35
+            and (sample.torso_lean is None or sample.torso_lean <= 25)
+        )
         if not self.baseline:
-            checks["standing"] = (
-                sample.knee_angle >= 145 and (sample.knee_y - sample.hip_y) / sample.leg_length >= 0.35
-                and (sample.torso_lean is None or sample.torso_lean <= 25)
-            )
             if checks["standing"]:
                 checks["steady"] = self._calibrate(sample)
             else:
                 self._interrupt_calibration(timestamp_ms)
             progress = self._calibration_progress()
-            if not checks["steady"] or progress < 1 or len(self.calibration) < 8:
+            if not checks["steady"] or progress < 1 or len(self.calibration) < MIN_CALIBRATION_SAMPLES:
                 message = "Hold a comfortable standing position." if checks["standing"] else "Stand tall to calibrate."
                 return state(message, progress=progress)
             self.baseline = _make_baseline(self.calibration)
@@ -478,24 +545,46 @@ class SquatTracker:
             if lock_standing:
                 self._lock_reference(timestamp_ms)
             self._clear_calibration_samples()
+            self.standing_observed_ms = CALIBRATION_MS
+            self.standing_observed_at = timestamp_ms
             self.phase = "ready"
 
+        upright = checks["standing"]
         baseline = self.baseline
         start = self.attempt.start if self.attempt else self.locked_standing or baseline
         hip_drop = _hip_drop_from(sample, start, baseline.leg_length)
         knee_bend = start.knee_angle - sample.knee_angle
-        returned_to_standing = (knee_bend <= 15 and hip_drop <= 0.11) or (knee_bend <= 22 and hip_drop <= 0.06)
-        settled = knee_bend <= 8 and hip_drop < 0.055 and abs(sample.speed) < 0.15
-        ready_pose = returned_to_standing if self.locked_standing else knee_bend <= 8 and hip_drop < 0.055
+        upright_again = upright and abs(hip_drop) <= 0.045 and (sample.knee_y - sample.hip_y) / sample.thigh_length >= 0.91
+        returned_to_standing = ((knee_bend <= 15 and hip_drop <= 0.11) or (knee_bend <= 22 and hip_drop <= 0.06)
+                                or upright_again)
+        same_stance = (
+            previous and abs(_hip_drop_from(raw, previous.raw, baseline.leg_length)) < 0.03
+            and abs(raw.knee_angle - previous.raw.knee_angle) < 4
+        )
+        close_to_standing = knee_bend <= 8 and hip_drop < 0.055
+        settled = ((close_to_standing or (upright_again and (not armed or self.phase == "ascending")))
+                   and (abs(sample.speed) < 0.15 or same_stance))
+        eligible_for_standing_hold = upright and (settled or (
+            knee_bend <= 12 and abs(_hip_drop_from(raw, start, baseline.leg_length)) < 0.13
+        ))
+        ready_pose = returned_to_standing if self.locked_standing else close_to_standing or upright_again
         checks["standing"] = ready_pose if self.phase == "ready" else returned_to_standing
         checks["steady"] = ready_pose and abs(sample.speed) < 0.15
+        if self.attempt:
+            if self.phase == "ascending":
+                self._observe_standing(sample.time, eligible_for_standing_hold)
+        else:
+            if not self.capture_standing_ready or upright:
+                self._observe_standing(sample.time, eligible_for_standing_hold)
+            if armed and self.standing_observed_ms >= CALIBRATION_MS:
+                self.capture_standing_ready = True
         if not lock_standing and not self.attempt:
             self._remember_standing(sample, settled)
         if settled and not self.attempt:
             self.last_standing_at = sample.time
         if not armed and not settled:
             self.last_standing_at = None
-        if armed:
+        if armed and (self.attempt or self.capture_standing_ready):
             movement = replace(raw, drop=_hip_drop_from(raw, start, baseline.leg_length), bend=start.knee_angle - raw.knee_angle)
             self._track_rep(sample, movement, start, returned_to_standing, settled, previous.raw if previous else None, events)
 
@@ -514,19 +603,37 @@ class SquatTracker:
         }
         messages = {
             "setup": "Stand tall to recalibrate.",
-            "ready": "Side view ready." if checks["standing"] else "Stand tall before starting the next rep.",
+            "ready": (
+                "Stand tall before starting the next rep." if not checks["standing"]
+                else "Side view ready." if self.standing_observed_ms >= CALIBRATION_MS
+                else "Hold a comfortable standing position."
+            ),
             "descending": "Lower through your comfortable range.",
             "bottom": "Rise when you’re ready.",
             "ascending": "Return to your standing position.",
         }
-        return state(messages[self.phase], live, 1 if self.baseline else 0, self.phase == "ready" and checks["steady"])
+        return state(messages[self.phase], live, self._standing_progress(),
+                     self.phase == "ready" and checks["steady"] and self.standing_observed_ms >= CALIBRATION_MS)
 
-    def _invalid_pose(self, pose, timestamp_ms, events, tracking, sustained_foot_shift):
-        self.previous = None
+    def _invalid_pose(self, pose, timestamp_ms, events, tracking, sustained_turn, continuity):
+        self.previous_was_missing = True
+        if not self.baseline:
+            self.previous = None
         self.onset_at = None
         if not self.baseline:
-            self._interrupt_calibration(timestamp_ms)
+            if pose.turn_corroborated:
+                self._clear_calibration_samples()
+            else:
+                self._interrupt_calibration(timestamp_ms)
+        elif not self.attempt:
+            brief_miss = not pose.sample or pose.weak
+            if (brief_miss and self.standing_observed_at is not None
+                    and timestamp_ms - self.standing_observed_at <= CALIBRATION_GAP_MS):
+                self.standing_interrupted = True
+            else:
+                self._reset_standing_observation()
         if self.attempt:
+            self._interrupt_standing_observation(timestamp_ms)
             self.attempt.total_frames += 1
             self.attempt.max_gap = max(self.attempt.max_gap, timestamp_ms - self.last_valid_time)
             self.attempt.rise_at = None
@@ -537,21 +644,23 @@ class SquatTracker:
         elif not tracking:
             self.last_standing_at = None
             self.standing_samples = []
-        if sustained_foot_shift:
-            self._lose_calibration(events, "foot-moved")
-            return "Stand still to set your new position."
-        if pose.shifted_foot:
-            return "Keep your foot position steady."
+        if sustained_turn:
+            self._lose_calibration(events, "tracking-gap")
         if pose.too_far:
             return "Move a little closer while keeping your head and feet in frame."
+        if continuity:
+            return "Finding a clearer view of your leg."
         messages = {
             "no-pose": "Step into view so the camera can see you.",
             "joints": "Keep your near hip, knee and ankle visible.",
+            "shape": "Finding a clearer view of your leg.",
             "shoulder": "Keep a shoulder visible while you set up.",
             "head": "Keep your head in frame and look straight ahead.",
             "feet": "Show your whole feet, including your heels.",
             "edges": "Leave a little space around your head and feet.",
         }
+        if pose.weak and pose.side_on:
+            return messages["joints"]
         return messages.get(pose.reason, "Turn sideways so the camera sees your profile.")
 
     def _smooth(self, sample):
@@ -566,12 +675,12 @@ class SquatTracker:
         agrees = raw_hip_rate * raw_knee_rate > 0
         motion = _clamp(min(abs(raw_hip_rate) / 0.48, abs(raw_knee_rate) / 90), 0, 1) if agrees else 0
         blend = 1 - exp(-interval / (88 - 74 * motion))
-        for key in ("hip_y", "knee_y", "knee_angle", "hip_angle", "torso_lean", "shin_lean"):
+        for key in ("hip_y", "knee_y", "hip_from_support", "knee_angle", "hip_angle", "torso_lean", "shin_lean"):
             value, old = getattr(sample, key), getattr(previous, key)
             if value is not None and old is not None:
                 setattr(sample, key, old + (value - old) * blend)
-        if self.baseline:
-            speed = (sample.hip_y - previous.hip_y) * 1000 / (interval * self.baseline.leg_length)
+        if self.baseline and not self.previous_was_missing:
+            speed = _hip_drop_from(sample, previous, self.baseline.leg_length) * 1000 / interval
             sample.speed = previous.speed + (_clamp(speed, -12, 12) - previous.speed) * blend
 
     def _calibrate(self, sample):
@@ -580,9 +689,7 @@ class SquatTracker:
             self._clear_calibration_samples()
         if self.calibration:
             recent = [pose for pose in self.calibration if sample.time - pose.time <= STANDING_REFERENCE_MS]
-            hip_height = sample.ankle_y - sample.hip_y
-            if (abs(hip_height - median(pose.ankle_y - pose.hip_y for pose in recent)) > sample.leg_length * 0.065
-                    or abs(sample.ankle_x - median(pose.ankle_x for pose in recent)) > sample.leg_length * 0.075
+            if (abs(_upright_hip_height(sample) - median(_upright_hip_height(pose) for pose in recent)) > 0.065
                     or abs(sample.knee_angle - median(pose.knee_angle for pose in recent)) > 11):
                 self._interrupt_calibration(sample.time)
                 return False
@@ -593,7 +700,7 @@ class SquatTracker:
         return len(self.calibration) > 1
 
     def _calibration_progress(self):
-        return min(1, self.calibration_observed_ms / CALIBRATION_MS)
+        return min(1, self.calibration_observed_ms / CALIBRATION_MS, len(self.calibration) / MIN_CALIBRATION_SAMPLES)
 
     def _clear_calibration_samples(self):
         self.calibration = []
@@ -605,6 +712,33 @@ class SquatTracker:
             self._clear_calibration_samples()
         else:
             self.calibration_interrupted = True
+
+    def _standing_progress(self):
+        return 1 if self.attempt else min(1, self.standing_observed_ms / CALIBRATION_MS)
+
+    def _observe_standing(self, timestamp_ms, eligible):
+        if not eligible:
+            self._reset_standing_observation()
+            return
+        if self.standing_observed_at is not None:
+            interval = timestamp_ms - self.standing_observed_at
+            if interval > CALIBRATION_GAP_MS:
+                self.standing_observed_ms = 0
+            elif not self.standing_interrupted:
+                self.standing_observed_ms = min(CALIBRATION_MS, self.standing_observed_ms + interval)
+        self.standing_observed_at = timestamp_ms
+        self.standing_interrupted = False
+
+    def _reset_standing_observation(self):
+        self.standing_observed_ms = 0
+        self.standing_observed_at = None
+        self.standing_interrupted = False
+
+    def _interrupt_standing_observation(self, timestamp_ms):
+        if self.standing_observed_at is not None and timestamp_ms - self.standing_observed_at <= CALIBRATION_GAP_MS:
+            self.standing_interrupted = True
+        else:
+            self._reset_standing_observation()
 
     def _remember_standing(self, sample, settled):
         self.standing_samples = [pose for pose in self.standing_samples if sample.time - pose.time <= STANDING_REFERENCE_MS]
@@ -666,18 +800,20 @@ class SquatTracker:
             return
 
         rep.peak_up = max(rep.peak_up, -sample.speed)
-        if rep.bottom.drop - hip_drop < -0.045:
+        if rep.bottom.drop - hip_drop < -0.045 and knee_bend >= rep.bottom.bend + 5:
             self._discard(events, "second-descent")
             return
         if not self._confirm_finish(rep, sample, knee_bend, hip_drop, standing):
             return
-        if rep.valid_frames / rep.total_frames < 0.85:
+        valid_fraction = rep.valid_frames / rep.total_frames
+        if valid_fraction < 0.75 or (valid_fraction < 0.85 and rep.total_frames - rep.valid_frames > 5):
             self._discard(events, "low-confidence")
             return
         _finalize_captures(rep, sample, events)
         events.append({"type": "rep-complete", "rep": _format_rep(rep, sample, self.baseline)})
         self.attempt = None
         self.phase = "ready"
+        self.capture_standing_ready = False
         self.last_standing_at = sample.time if settled else None
         self.onset_at = None
 
@@ -729,11 +865,13 @@ class SquatTracker:
         if isinstance(start, StandingReference):
             reference = replace(start, time=time)
         else:
-            reference = StandingReference(start.knee_angle, start.hip_y, start.ankle_x, start.ankle_y, time=time)
+            reference = StandingReference(start.knee_angle, start.hip_y, start.support_y,
+                                          start.support_other_y, start.hip_from_support, time=time)
         rep = Rep(self.next_rep_id, reference, self.onset_at, max(0, sample.speed))
         self.next_rep_id += 1
         self.phase = "descending"
         self.attempt = rep
+        self._reset_standing_observation()
         _capture(rep, "start", sample, events)
 
     def _discard(self, events, reason):
@@ -741,6 +879,8 @@ class SquatTracker:
             events.append({"type": "rep-discarded", "repId": self.attempt.id, "reason": reason})
         self.attempt = None
         self.phase = "ready" if self.baseline else "setup"
+        self._reset_standing_observation()
+        self.capture_standing_ready = False
         self.last_standing_at = None
         self.onset_at = None
 
@@ -748,10 +888,11 @@ class SquatTracker:
         self.baseline = None
         self.previous = None
         self.last_valid_time = None
+        self.previous_was_missing = False
+        self.weak_at = None
         self._clear_calibration_samples()
         self.standing_samples = []
         self.locked_standing = None
         self.locked_standing_at = None
-        self.ankle_shift_at = None
         self.turn_at = None
         self._discard(events, reason)

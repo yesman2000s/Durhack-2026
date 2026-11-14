@@ -1,13 +1,14 @@
-"""Run the COMPOSE bodyweight squat camera as a local desktop app."""
+"""Run the COMPOSE side-view movement camera as a local desktop app."""
 
 from __future__ import annotations
 
 import argparse
 import base64
 from bisect import bisect_right
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
-from math import acos, cos, degrees, hypot, isfinite, radians, sin
+from math import acos, cos, degrees, hypot, isfinite, pi, radians, sin
 from pathlib import Path
 from statistics import median
 import sys
@@ -26,15 +27,24 @@ import mediapipe as mp
 import numpy as np
 
 from squat_tracker import SquatTracker
+from mobility_tracker import MobilityTracker
+from movement_guides import (
+    CONNECTIONS as GUIDE_CONNECTIONS,
+    guide_joints,
+    guide_progress,
+    starting_guide_anchor,
+    training_range,
+)
 
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "public" / "models" / "pose_landmarker_lite.task"
-WINDOW = "COMPOSE - Squat Camera"
-POSE_CROP_WIDTH_PER_HEIGHT = 0.95
+WINDOW = "COMPOSE - Movement Camera"
+PREVIEW_CROP_WIDTH_PER_HEIGHT = 0.95
+POSE_CROP_WIDTH_PER_HEIGHT = 1.25
 CENTERED_BODY_MARGIN = 0.175
-COUNTDOWN_MS = 3000
+COUNTDOWN_MS = 2000
 POSE_INTERVAL_MS = 1000 / 12
-OVERLAY_LOSS_MS = 140
+OVERLAY_LOSS_MS = 240
 MAX_CAPTURE_CANDIDATES = 330
 MAX_CANDIDATE_IMAGE_EDGE = 800
 MAX_MOTION_SAMPLES = 400
@@ -57,8 +67,8 @@ PRACTICE_GUIDE = {
     "measurementLimits": "Estimates from one side in 2D. Do not infer side-to-side knee alignment, spinal loading, overall safety, or balance.",
 }
 SIDE_CONNECTIONS = {
-    "left": ((11, 23), (23, 25), (25, 27), (27, 29), (29, 31)),
-    "right": ((12, 24), (24, 26), (26, 28), (28, 30), (30, 32)),
+    "left": ((11, 13), (13, 15), (11, 23), (23, 25), (25, 27), (27, 29), (29, 31)),
+    "right": ((12, 14), (14, 16), (12, 24), (24, 26), (26, 28), (28, 30), (30, 32)),
 }
 POSE_JOINTS = {"nose": 0, "shoulder": 11, "hip": 23, "knee": 25, "ankle": 27, "heel": 29, "toe": 31}
 MOTION_JOINTS = {**POSE_JOINTS, "elbow": 13, "wrist": 15}
@@ -71,14 +81,35 @@ INK = (240, 246, 244)
 MUTED = (169, 191, 183)
 ACCENT = (144, 243, 194)
 BG = (31, 37, 32)
+POSE_OUTLINE = (15, 21, 17)
+GUIDE_BAR = (135, 211, 249)
+VARIANT_LABELS = {"bodyweight": "Bodyweight", "barbell": "Barbell"}
+EXERCISES = {
+    "squat": {"title": "Squat", "short": "Squat", "setup": "Stand sideways in the center so your whole body fits.",
+              "cue": "Lower into a comfortable squat, then stand tall.", "out": "Lower", "peak": "Bottom", "return": "Rise"},
+    "push-up": {"title": "Push-up", "short": "Push-up", "setup": "Set up in a high plank side-on. Keep your head, hands and toes in view.",
+                "cue": "Bend your elbows to lower toward the floor, then press back up.",
+                "out": "Lower", "peak": "Bottom", "return": "Press", "range_label": "Elbow bend"},
+    "knee-raise": {"title": "Knee raise", "short": "Knee raise", "setup": "Stand upright and side-on with both feet in view.",
+                   "cue": "Lift the knee nearest the camera in front of you, then lower your foot.",
+                   "out": "Lift", "peak": "Peak", "return": "Lower", "range_label": "Thigh lift"},
+    "heel-raise": {"title": "Heel raise", "short": "Heel raise", "setup": "Stand upright and side-on with both feet flat. Keep your heels and toes in view.",
+                   "cue": "Lift both heels with your toes planted, then lower your heels to the floor.",
+                   "out": "Lift", "peak": "Peak", "return": "Lower", "range_label": "Heel lift"},
+}
 DISCARD_MESSAGES = {
     "tracking-gap": "Tracking was lost. Keep your near hip, knee and ankle visible throughout the squat.",
-    "foot-moved": "Your foot position changed. Stand still and press Space to set up again.",
     "timeout": "No complete rep was detected in time. Press Space to try again.",
     "incomplete-descent": "The camera saw a small bend. Try one continuous squat through your comfortable range.",
     "incomplete-ascent": "The camera missed part of the rise. Stand tall briefly at the end of your next rep.",
     "low-confidence": "Part of the squat was obscured. Improve the lighting and keep your near side visible.",
     "second-descent": "The camera saw a second lowering motion. Finish one rep before starting again.",
+}
+MOBILITY_DISCARD_MESSAGES = {
+    "tracking-gap": "Tracking was lost. Keep the moving joints visible throughout the rep.",
+    "foot-moved": "Your starting position shifted. Reset and try again.",
+    "incomplete-descent": "The movement ended before the camera saw a full rep. Try one continuous rep.",
+    "low-confidence": "Part of the movement was obscured. Keep your near side visible in good light.",
 }
 
 
@@ -95,14 +126,16 @@ def play_go_sound():
         pass
 
 
-def center_crop_bounds(width: int, height: int) -> tuple[int, int]:
-    crop_width = min(width, max(1, int(height * POSE_CROP_WIDTH_PER_HEIGHT + 0.5)))
+def center_crop_bounds(width: int, height: int, ratio=PREVIEW_CROP_WIDTH_PER_HEIGHT, exercise="squat") -> tuple[int, int]:
+    if exercise == "push-up":
+        return 0, width
+    crop_width = min(width, max(1, int(height * ratio + 0.5)))
     return (width - crop_width) // 2, crop_width
 
 
-def detect_centered_pose(detector, frame: np.ndarray, timestamp_ms: int):
+def detect_centered_pose(detector, frame: np.ndarray, timestamp_ms: int, exercise="squat", *, full_frame=False):
     height, width = frame.shape[:2]
-    left, crop_width = center_crop_bounds(width, height)
+    left, crop_width = (0, width) if full_frame else center_crop_bounds(width, height, POSE_CROP_WIDTH_PER_HEIGHT, exercise)
     rgb = cv2.cvtColor(frame[:, left:left + crop_width], cv2.COLOR_BGR2RGB)
     image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     result = detector.detect_for_video(image, timestamp_ms)
@@ -120,8 +153,8 @@ def detect_centered_pose(detector, frame: np.ndarray, timestamp_ms: int):
     return landmarks
 
 
-def pose_within_center(landmarks, width: int, height: int) -> bool:
-    left, crop_width = center_crop_bounds(width, height)
+def pose_within_center(landmarks, width: int, height: int, exercise="squat") -> bool:
+    left, crop_width = center_crop_bounds(width, height, exercise=exercise)
     if crop_width == width or not landmarks:
         return True
 
@@ -166,17 +199,16 @@ def thigh_to_shin_ratio(joints, width, height):
     return round(thigh / shin, 3)
 
 
-def motion_sample(landmarks, live, timestamp_ms, width, height):
+def motion_sample(landmarks, live, timestamp_ms, width, height, exercise="squat"):
     if not live or not landmarks:
         return None
     joints = pose_joints(landmarks, live["side"], MOTION_JOINTS)
-    if live["torsoLeanDeg"] is None:
+    if live.get("torsoLeanDeg") is None:
         joints.pop("shoulder", None)
     if not all(name in joints for name in ("hip", "knee", "ankle")):
         return None
-    return {
+    sample = {
         "timestampMs": timestamp_ms,
-        "thighToShinRatio": thigh_to_shin_ratio(joints, width, height),
         "joints": {
             name: {
                 "x": round(point["x"], 4), "y": round(point["y"], 4),
@@ -185,13 +217,16 @@ def motion_sample(landmarks, live, timestamp_ms, width, height):
             for name, point in joints.items()
         },
     }
+    if exercise == "squat":
+        sample["thighToShinRatio"] = thigh_to_shin_ratio(joints, width, height)
+    return sample
 
 
 def make_motion_trace(samples, start_ms, movement_start_ms):
     frames = [
         {
             "offsetMs": round(sample["timestampMs"] - start_ms), "joints": sample["joints"],
-            "thighToShinRatio": sample["thighToShinRatio"],
+            **({"thighToShinRatio": sample["thighToShinRatio"]} if "thighToShinRatio" in sample else {}),
         }
         for i, sample in enumerate(samples)
         if i == 0 or sample["timestampMs"] >= movement_start_ms - 400
@@ -208,7 +243,31 @@ def visible_motion_joints(joints):
     }
 
 
+def _replay_slope(adjacent, adjacent_ms, central, central_ms):
+    if adjacent is None:
+        return central
+    if adjacent * central <= 0:
+        return 0
+    outer_weight = 2 * central_ms + adjacent_ms
+    inner_weight = central_ms + 2 * adjacent_ms
+    return (outer_weight + inner_weight) / (outer_weight / adjacent + inner_weight / central)
+
+
+def _replay_coordinate(first, second, previous, following, gap, previous_gap, following_gap, t):
+    central = (second - first) / gap
+    earlier = (first - previous) / previous_gap if previous is not None else None
+    later = (following - second) / following_gap if following is not None else None
+    start_slope = _replay_slope(earlier, previous_gap, central, gap)
+    end_slope = _replay_slope(later, following_gap, central, gap)
+    square, cube = t * t, t * t * t
+    value = ((2 * cube - 3 * square + 1) * first + (cube - 2 * square + t) * gap * start_slope
+             + (-2 * cube + 3 * square) * second + (cube - square) * gap * end_slope)
+    return min(max(value, min(first, second)), max(first, second))
+
+
 def replay_joints_at(frames, offset_ms):
+    if not frames:
+        return {}
     right_index = bisect_right(frames, offset_ms, key=lambda sample: sample["offsetMs"])
     if right_index == 0:
         return visible_motion_joints(frames[0]["joints"])
@@ -225,8 +284,18 @@ def replay_joints_at(frames, offset_ms):
         return {}
     t = (offset_ms - before["offsetMs"]) / gap
     first, second = visible_motion_joints(before["joints"]), visible_motion_joints(after["joints"])
+    previous = frames[right_index - 2] if right_index >= 2 else None
+    following = frames[right_index + 1] if right_index + 1 < len(frames) else None
+    previous_gap = before["offsetMs"] - previous["offsetMs"] if previous is not None else 0
+    following_gap = following["offsetMs"] - after["offsetMs"] if following is not None else 0
+    earlier = visible_motion_joints(previous["joints"]) if 0 < previous_gap <= MOTION_SAMPLE_GAP_MS else {}
+    later = visible_motion_joints(following["joints"]) if 0 < following_gap <= MOTION_SAMPLE_GAP_MS else {}
     return {
-        name: {axis: point[axis] + (second[name][axis] - point[axis]) * t for axis in ("x", "y")}
+        name: {
+            axis: _replay_coordinate(point[axis], second[name][axis], earlier.get(name, {}).get(axis),
+                                     later.get(name, {}).get(axis), gap, previous_gap, following_gap, t)
+            for axis in ("x", "y")
+        }
         for name, point in first.items() if name in second
     }
 
@@ -274,7 +343,7 @@ class LiveOverlay:
 
 
 def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: dict | None,
-                     max_edge=960) -> dict | None:
+                     max_edge=960, exercise="squat") -> dict | None:
     source_height, source_width = frame.shape[:2]
     height, width = source_height, source_width
     scale = min(1, max_edge / max(width, height))
@@ -293,50 +362,62 @@ def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: di
         "height": height,
         "mimeType": "image/jpeg",
         "imageBase64": base64.b64encode(encoded).decode("ascii"),
-        "kneeAngleDeg": live["kneeAngleDeg"] if live else None,
+        "kneeAngleDeg": live.get("kneeAngleDeg") if live else None,
     }
     if live and landmarks:
-        joints = pose_joints(landmarks, live["side"])
-        snapshot["pose"] = {
+        joints = pose_joints(landmarks, live["side"], MOTION_JOINTS if exercise != "squat" else POSE_JOINTS)
+        pose = {
             "side": live["side"],
-            "hipAngleDeg": live["hipAngleDeg"],
-            "torsoLeanDeg": live["torsoLeanDeg"],
-            "shinLeanDeg": live["shinLeanDeg"],
-            "hipDropLegLengths": live["hipDropRatio"],
-            "hipToKneeLegLengths": live["hipToKneeRatio"],
-            "hipSpeedLegLengthsPerSec": live["hipSpeedLegLengthsPerSec"],
-            "thighToShinRatio": thigh_to_shin_ratio(joints, source_width, source_height),
+            "hipAngleDeg": live.get("hipAngleDeg"),
+            "torsoLeanDeg": live.get("torsoLeanDeg"),
+            "shinLeanDeg": live.get("shinLeanDeg"),
             "joints": joints,
         }
+        if exercise == "squat":
+            pose.update({
+                "hipDropLegLengths": live["hipDropRatio"],
+                "hipToKneeLegLengths": live["hipToKneeRatio"],
+                "hipSpeedLegLengthsPerSec": live["hipSpeedLegLengthsPerSec"],
+                "thighToShinRatio": thigh_to_shin_ratio(joints, source_width, source_height),
+            })
+        else:
+            pose.update(range=live.get("range"), rangeUnit=live.get("rangeUnit"),
+                        movementSpeedPerSec=live.get("movementSpeedPerSec"))
+        snapshot["pose"] = pose
     return snapshot
 
 
 def make_evidence(rep: dict, frames: dict, camera: dict, reference: dict, captured_at: str,
-                  capture_start_ms: int, motion_samples=(), variant="bodyweight") -> dict:
+                  capture_start_ms: int, motion_samples=(), variant="bodyweight", exercise="squat", training_guide=False,
+                  source="webcam") -> dict:
     metrics = dict(rep["metrics"])
-    metrics["kneeExcursionDeg"] = metrics["startKneeAngleDeg"] - metrics["kneeAngleAtBottomDeg"]
-    metrics["returnAngleErrorDeg"] = abs(metrics["startKneeAngleDeg"] - metrics["finishKneeAngleDeg"])
-    ratios = [sample["thighToShinRatio"] for sample in motion_samples
-              if rep["startedAtMs"] <= sample["timestampMs"] <= rep["returnedAtMs"]
-              and sample["thighToShinRatio"] is not None]
-    metrics["thighToShinRatio"] = round(median(ratios), 3) if ratios else metrics.get("standingThighToShinRatio")
+    if exercise == "squat":
+        metrics["kneeExcursionDeg"] = metrics["startKneeAngleDeg"] - metrics["kneeAngleAtBottomDeg"]
+        metrics["returnAngleErrorDeg"] = abs(metrics["startKneeAngleDeg"] - metrics["finishKneeAngleDeg"])
+        ratios = [sample["thighToShinRatio"] for sample in motion_samples
+                  if rep["startedAtMs"] <= sample["timestampMs"] <= rep["returnedAtMs"]
+                  and sample.get("thighToShinRatio") is not None]
+        metrics["thighToShinRatio"] = round(median(ratios), 3) if ratios else metrics.get("standingThighToShinRatio")
     snapshots = []
     for phase in PHASES:
         if phase in frames:
             image = dict(frames[phase])
             offset = round(image.pop("timestampMs") - capture_start_ms)
             snapshots.append({"phase": phase, "offsetMs": offset, **image})
-    if reference["establishedByThisRep"]:
+    if exercise != "squat":
+        cue = {"code": "OBSERVED_CYCLE", "text": f"The camera tracked one {EXERCISES[exercise]['short'].lower()} from the side."}
+    elif reference["establishedByThisRep"]:
         cue = {"code": "BASELINE_CAPTURED", "text": "This rep established your personal range reference for this camera setup."}
     else:
-        cue = {"code": "OBSERVED_CYCLE", "text": "Captured one down and up cycle from the same side view."}
+        cue = {"code": "OBSERVED_CYCLE", "text": "Captured one complete rep from the same side view."}
     return {
         "schemaVersion": 1,
         "id": str(uuid.uuid4()),
-        "exercise": "squat",
-        "variant": variant,
+        "exercise": exercise,
+        "variant": variant if exercise == "squat" else "bodyweight",
         "captureMode": "single-rep",
-        "source": "webcam",
+        "source": source,
+        **({"videoStartOffsetMs": round(capture_start_ms)} if source == "video" else {}),
         "capturedAt": captured_at,
         "camera": camera,
         "trackingSide": rep["side"],
@@ -345,17 +426,28 @@ def make_evidence(rep: dict, frames: dict, camera: dict, reference: dict, captur
         "metrics": metrics,
         "cue": cue,
         "observations": rep["cues"],
-        "practiceGuide": PRACTICE_GUIDE,
+        "practiceGuide": PRACTICE_GUIDE if exercise == "squat" else {
+            "guidance": [EXERCISES[exercise]["setup"], EXERCISES[exercise]["cue"]],
+            "measurementLimits": "Range and speed are estimated from one side in 2D.",
+        },
         "snapshots": snapshots,
         "motionTrace": make_motion_trace(motion_samples, capture_start_ms, rep["startedAtMs"]),
+        **({"trainingGuide": True} if training_guide else {}),
     }
 
 
 class CaptureSession:
-    def __init__(self, output: Path, variant="bodyweight"):
+    def __init__(self, output: Path, variant="bodyweight", exercise="squat", training=False, source="webcam"):
         self.output = output
         self.variant = variant
-        self.tracker = SquatTracker()
+        self.exercise = exercise
+        self.source = source
+        self.training_next = training
+        self.training_active = False
+        self.training_anchor = None
+        self.review_training_anchor = None
+        self.review_training_visible = False
+        self.tracker = SquatTracker() if exercise == "squat" else MobilityTracker(exercise)
         self.profile_id = str(uuid.uuid4())
         self.frame_size = None
         self.reference = None
@@ -385,13 +477,16 @@ class CaptureSession:
             return
         self.cancel()
         self.notice = ""
-        self.wait_until = timestamp_ms + 45000
+        self.training_active = self.training_next
+        self.training_next = False
+        self.wait_until = float("inf") if self.source == "video" else timestamp_ms + 45000
 
     def cancel(self):
         self.wait_until = None
         self.armed_at = None
         self.go_at = None
         self.active_since = None
+        self.training_active = False
         self.clear_countdown()
         self.rep_started = False
         self.close_replay()
@@ -403,13 +498,14 @@ class CaptureSession:
         self.snapshots.clear()
         self.capture_candidates.clear()
         self.motion_samples = []
+        self.training_anchor = None
 
     def keep_motion_sample(self, landmarks, live, timestamp_ms, width, height, force=False):
         if self.motion_samples:
             elapsed = timestamp_ms - self.motion_samples[-1]["timestampMs"]
             if elapsed <= 0 or (not force and elapsed < MOTION_SAMPLE_INTERVAL_MS):
                 return
-        sample = motion_sample(landmarks, live, timestamp_ms, width, height)
+        sample = motion_sample(landmarks, live, timestamp_ms, width, height, self.exercise)
         if sample is None:
             return
         if len(self.motion_samples) >= MAX_MOTION_SAMPLES:
@@ -471,7 +567,35 @@ class CaptureSession:
         self.profile_id = str(uuid.uuid4())
         self.reference = None
         self.state = {"phase": "setup", "setup": {"ready": False, "checks": {}}, "live": None}
-        self.notice = "Setup reset. Check your framing and stand still."
+        self.notice = "Setup reset. Check your framing and hold your starting position."
+
+    def toggle_variant(self):
+        if self.exercise != "squat":
+            self.notice = "Bodyweight and barbell options apply to Squat."
+            return
+        if self.armed or self.wait_until is not None:
+            self.notice = "Finish or cancel this capture before changing the squat type."
+            return
+        self.variant = "barbell" if self.variant == "bodyweight" else "bodyweight"
+        self.recalibrate()
+        self.notice = f"{VARIANT_LABELS[self.variant]} selected. Press Space to arm a rep."
+
+    def cycle_exercise(self):
+        if self.armed or self.wait_until is not None:
+            self.notice = "Finish or cancel this capture to choose a different exercise."
+            return
+        catalog = tuple(EXERCISES)
+        self.exercise = catalog[(catalog.index(self.exercise) + 1) % len(catalog)]
+        self.tracker = SquatTracker() if self.exercise == "squat" else MobilityTracker(self.exercise)
+        self.recalibrate()
+        self.notice = f"{EXERCISES[self.exercise]['title']} selected. Press Space to arm a rep."
+
+    def toggle_training(self):
+        if self.armed or self.wait_until is not None:
+            self.notice = "Finish or cancel this capture to change the training overlay."
+            return
+        self.training_next = not self.training_next
+        self.notice = f"Training overlay {'on' if self.training_next else 'off'} for the next rep."
 
     def save(self):
         if not self.latest:
@@ -479,7 +603,7 @@ class CaptureSession:
             return
         try:
             self.output.mkdir(parents=True, exist_ok=True)
-            path = self.output / f"compose-squat-{self.latest['id']}.json"
+            path = self.output / f"compose-{self.latest['exercise']}-{self.latest['id']}.json"
             path.write_text(json.dumps(self.latest, indent=2, allow_nan=False), encoding="utf-8")
         except (OSError, ValueError) as error:
             self.notice = "Could not save the rep. Check the output folder."
@@ -487,10 +611,13 @@ class CaptureSession:
             return
         self.notice = "Saved the rep and snapshots."
         print(f"Saved {path.resolve()}")
+        return path
 
     def clear_result(self):
         self.latest = None
         self.thumbnails = []
+        self.review_training_anchor = None
+        self.review_training_visible = False
         self.close_replay()
         self.notice = "Rep result cleared."
 
@@ -502,12 +629,14 @@ class CaptureSession:
         self.frame_size = (width, height)
         standby = self.countdown_until is not None
         tracking_motion = self.armed or standby
-        centered = pose_within_center(landmarks, width, height)
+        recorded = self.source == "video"
+        centered = recorded or pose_within_center(landmarks, width, height, self.exercise)
         self.state = self.tracker.update(
             landmarks if centered or tracking_motion else None,
             timestamp_ms, width, height, armed=tracking_motion, lock_standing=tracking_motion,
         )
-        if not tracking_motion and (not centered or (not landmarks and center_crop_bounds(width, height)[1] < width)):
+        if (not recorded and not tracking_motion
+                and (not centered or (not landmarks and center_crop_bounds(width, height, exercise=self.exercise)[1] < width))):
             self.state["setup"]["message"] = "Step into the center with your head and feet visible."
         live = self.state["live"]
         ready = centered and self.state["setup"]["ready"] and self.state["phase"] == "ready"
@@ -516,6 +645,8 @@ class CaptureSession:
             self.profile_id = str(uuid.uuid4())
 
         if tracking_motion:
+            if self.exercise == "squat" and self.training_anchor is not None and live:
+                self.training_anchor.follow_squat_stance(landmarks, live["side"], width, timestamp_ms)
             finished = any(event["type"] == "rep-complete" for event in self.state["events"])
             self.keep_motion_sample(landmarks, live, timestamp_ms, width, height, force=finished)
         if not self.armed and self.wait_until is not None:
@@ -533,16 +664,25 @@ class CaptureSession:
                     self.clear_countdown()
                 elif live is not None:
                     checks = self.state["setup"]["checks"]
-                    if timestamp_ms >= self.countdown_until and centered and checks["sideOn"] and checks["standing"]:
+                    if (timestamp_ms >= self.countdown_until and (centered or self.exercise == "squat")
+                            and checks["sideOn"] and checks["standing"]):
                         self.begin_capture(timestamp_ms)
             elif ready:
                 self.countdown_started_at = timestamp_ms
-                self.countdown_until = timestamp_ms + COUNTDOWN_MS
                 self.capture_timestamp = now_iso()
-                start_image = capture_snapshot(frame, timestamp_ms, landmarks, live)
+                start_image = capture_snapshot(frame, timestamp_ms, landmarks, live, exercise=self.exercise)
                 if start_image is not None:
                     self.snapshots["start"] = start_image
+                if self.training_active or recorded:
+                    crop = (0, width) if recorded else center_crop_bounds(width, height, exercise=self.exercise)
+                    self.training_anchor = starting_guide_anchor(
+                        landmarks, live, width, height, self.exercise, timestamp_ms, crop, self.variant,
+                    )
                 self.keep_motion_sample(landmarks, live, timestamp_ms, width, height)
+                if recorded:
+                    self.begin_capture(timestamp_ms, early=True)
+                else:
+                    self.countdown_until = timestamp_ms + COUNTDOWN_MS
             if not movement_started or not self.armed:
                 return
 
@@ -550,12 +690,12 @@ class CaptureSession:
             return
         if not self.rep_started and self.state["phase"] == "setup":
             self.return_to_positioning()
-            self.notice = "Stand side-on again. The countdown will restart when you're ready."
+            self.notice = "Return to your side-on starting position. The countdown will restart when you're ready."
             return
         if timestamp_ms - self.active_since > 20000:
             self.cancel()
             self.tracker.reset()
-            self.notice = "No complete rep was detected in time. Stand tall and try again."
+            self.notice = "No complete rep was detected in time. Return to the start and try again."
             return
         if not self.state["events"] and self.state["phase"] == "setup" and timestamp_ms - self.active_since > 800:
             self.cancel()
@@ -565,10 +705,13 @@ class CaptureSession:
         for event in self.state["events"]:
             if event["type"] == "capture-candidate":
                 candidate = capture_snapshot(
-                    frame, event["timestampMs"], landmarks, live, max_edge=MAX_CANDIDATE_IMAGE_EDGE,
+                    frame, event["timestampMs"], landmarks, live, max_edge=MAX_CANDIDATE_IMAGE_EDGE, exercise=self.exercise,
                 )
                 if candidate is not None:
-                    candidate["kneeAngleDeg"] = event["kneeAngleDeg"]
+                    if "kneeAngleDeg" in event:
+                        candidate["kneeAngleDeg"] = event["kneeAngleDeg"]
+                    if "range" in event and candidate.get("pose") is not None:
+                        candidate["pose"]["range"] = event["range"]
                     if len(self.capture_candidates) >= MAX_CAPTURE_CANDIDATES:
                         del self.capture_candidates[next(iter(self.capture_candidates))]
                     self.capture_candidates[event["timestampMs"]] = candidate
@@ -579,12 +722,13 @@ class CaptureSession:
                 if phase != "start" or "start" not in self.snapshots:
                     image = self.capture_candidates.get(event["timestampMs"])
                     if image is None and event["timestampMs"] == timestamp_ms:
-                        image = capture_snapshot(frame, timestamp_ms, landmarks, live)
+                        image = capture_snapshot(frame, timestamp_ms, landmarks, live, exercise=self.exercise)
                     if image is not None:
                         self.snapshots[phase] = image
             elif event["type"] == "rep-discarded":
                 self.cancel()
-                self.notice = DISCARD_MESSAGES.get(event["reason"], "The full rep could not be tracked. Check your framing and try again.")
+                messages = DISCARD_MESSAGES if self.exercise == "squat" else MOBILITY_DISCARD_MESSAGES
+                self.notice = messages.get(event["reason"], "The full rep could not be tracked. Check your framing and try again.")
                 break
             elif event["type"] == "rep-complete":
                 rep = event["rep"]
@@ -595,19 +739,28 @@ class CaptureSession:
                         "id": str(uuid.uuid4()),
                         "trackingSide": rep["side"],
                         "capturedAt": now_iso(),
-                        "kneeExcursionDeg": metrics["startKneeAngleDeg"] - metrics["kneeAngleAtBottomDeg"],
-                        "standingKneeAngleDeg": metrics["startKneeAngleDeg"],
-                        "torsoLeanAtBottomDeg": metrics["torsoLeanAtBottomDeg"],
-                        "bottomHipToKneeLegLengths": metrics["bottomHipToKneeLegLengths"],
-                        "standingThighToShinRatio": metrics["standingThighToShinRatio"],
-                        "standingTorsoToLegRatio": metrics["standingTorsoToLegRatio"],
                     }
+                    if self.exercise == "squat":
+                        self.reference.update({
+                            "kneeExcursionDeg": metrics["startKneeAngleDeg"] - metrics["kneeAngleAtBottomDeg"],
+                            "standingKneeAngleDeg": metrics["startKneeAngleDeg"],
+                            "torsoLeanAtBottomDeg": metrics["torsoLeanAtBottomDeg"],
+                            "bottomHipToKneeLegLengths": metrics["bottomHipToKneeLegLengths"],
+                            "standingThighToShinRatio": metrics["standingThighToShinRatio"],
+                            "standingTorsoToLegRatio": metrics["standingTorsoToLegRatio"],
+                        })
+                    else:
+                        self.reference.update(range=metrics["range"], rangeUnit=metrics["rangeUnit"])
                 camera = {"id": self.profile_id, "width": width, "height": height, "view": "side"}
                 reference = {**self.reference, "establishedByThisRep": established_here}
                 self.latest = make_evidence(
                     rep, self.snapshots, camera, reference, self.capture_timestamp,
-                    self.armed_at, self.motion_samples, self.variant,
+                    self.armed_at, self.motion_samples, self.variant, self.exercise,
+                    self.training_active and self.training_anchor is not None, self.source,
                 )
+                if recorded and self.training_anchor is not None:
+                    self.review_training_anchor = replace(self.training_anchor, shift_x=0)
+                    self.review_training_visible = self.training_active
                 self.thumbnails = []
                 for snapshot in self.latest["snapshots"]:
                     jpeg = np.frombuffer(base64.b64decode(snapshot["imageBase64"]), dtype=np.uint8)
@@ -622,7 +775,8 @@ class CaptureSession:
                 break
 
 
-def draw_pose(frame: np.ndarray, landmarks, side: str | None, tracking: bool, crop_left: float, crop_width: float):
+def draw_pose(frame: np.ndarray, landmarks, side: str | None, tracking: bool, crop_left: float, crop_width: float,
+              reacquiring=False, uncertain=False, exercise="squat"):
     if not landmarks:
         return
     height, width = frame.shape[:2]
@@ -630,20 +784,40 @@ def draw_pose(frame: np.ndarray, landmarks, side: str | None, tracking: bool, cr
         return
 
     def usable(point, index):
-        threshold = 0.30 if tracking and index in (11, 12) else 0.35 if tracking and 23 <= index <= 28 else 0.55
+        threshold = 0.55
+        if tracking and index in (11, 12):
+            threshold = 0.30
+        elif tracking and 23 <= index <= 28:
+            threshold = 0.25 if uncertain else 0.35
+        elif tracking and ((exercise == "push-up" and 13 <= index <= 16)
+                           or (exercise == "heel-raise" and 29 <= index <= 32)):
+            threshold = 0.38
         return (point.visibility or 0) >= threshold and crop_left <= point.x <= crop_left + crop_width and 0 <= point.y <= 1
 
     def pixel(point):
         return (round((point.x - crop_left) / crop_width * width), round(point.y * height))
 
+    color = MUTED if reacquiring else ACCENT
+    center_color = MUTED if reacquiring else INK
+    line_width = max(4, round(min(width, height) / 120))
+    radius = line_width + 1
+    segments = []
+    points = set()
     for a, b in SIDE_CONNECTIONS[side]:
         first, second = landmarks[a], landmarks[b]
         if not usable(first, a) or not usable(second, b):
             continue
         start, end = pixel(first), pixel(second)
-        cv2.line(frame, start, end, ACCENT, 2, cv2.LINE_AA)
-        cv2.circle(frame, start, 5, ACCENT, -1, cv2.LINE_AA)
-        cv2.circle(frame, end, 5, ACCENT, -1, cv2.LINE_AA)
+        segments.append((start, end))
+        points.update((start, end))
+    for start, end in segments:
+        cv2.line(frame, start, end, POSE_OUTLINE, line_width + 4, cv2.LINE_AA)
+    for start, end in segments:
+        cv2.line(frame, start, end, color, line_width, cv2.LINE_AA)
+    for point in points:
+        cv2.circle(frame, point, radius + 2, POSE_OUTLINE, -1, cv2.LINE_AA)
+        cv2.circle(frame, point, radius, color, -1, cv2.LINE_AA)
+        cv2.circle(frame, point, 2, center_color, -1, cv2.LINE_AA)
 
 
 def draw_text(image: np.ndarray, value: str, x: int, y: int, scale=0.56, color=INK, weight=1):
@@ -657,13 +831,113 @@ def draw_paragraph(image: np.ndarray, value: str, x: int, y: int, color=INK):
     return y
 
 
+def draw_training_overlay(preview, session, timestamp_ms, crop_left, crop_width, source_height):
+    if not session.armed or session.training_anchor is None:
+        return False
+    elapsed = timestamp_ms - session.active_since
+    if elapsed < 0:
+        return False
+    progress = guide_progress(elapsed) or 0
+    height, width = preview.shape[:2]
+
+    def pixels(x, y):
+        return round((x - crop_left) * width / crop_width), round(y * height / source_height)
+
+    draw_training_pose(preview, session.training_anchor, progress, session.exercise, session.variant, pixels, width / crop_width)
+    return True
+
+
+def draw_training_pose(preview, anchor, progress, exercise, variant, pixels, scale):
+    leg = anchor.leg
+    joints = guide_joints(exercise, progress * training_range(exercise), variant)
+    points = {name: pixels(anchor.x + anchor.direction * leg * x, anchor.y + leg * y) for name, (x, y) in joints.items()}
+    height = preview.shape[0]
+    line_width = max(3, round(height / 170))
+    dash_length = max(7, round(line_width * 2.1))
+    dash_gap = max(4, round(line_width * 1.5))
+    for first, second in GUIDE_CONNECTIONS:
+        if first not in points or second not in points:
+            continue
+        ax, ay = points[first]
+        bx, by = points[second]
+        length = hypot(bx - ax, by - ay)
+        for dash in range(0, round(length), dash_length + dash_gap):
+            a, b = dash / length, min(length, dash + dash_length) / length
+            start = (round(ax + (bx - ax) * a), round(ay + (by - ay) * a))
+            end = (round(ax + (bx - ax) * b), round(ay + (by - ay) * b))
+            cv2.line(preview, start, end, POSE_OUTLINE, line_width + 3, cv2.LINE_AA)
+            cv2.line(preview, start, end, GUIDE_BAR, line_width, cv2.LINE_AA)
+    if "bar" in points:
+        cv2.circle(preview, points["bar"], max(4, round(leg * scale * 0.09)), GUIDE_BAR, 2, cv2.LINE_AA)
+
+
+def draw_training_legend(preview, live, recorded=False):
+    height, width = preview.shape[:2]
+    scale = min(1.25, height / 545, width / 400)
+    font, weight = 0.48 * scale, max(1, round(scale * 1.5))
+    padding = max(8, round(12 * scale))
+    line_height = max(15, round(24 * scale))
+    rows = [("Training example", GUIDE_BAR, True)]
+    if live:
+        rows.append(("Recorded pose" if recorded else "Live pose", ACCENT, False))
+    hint = "T  Hide training guide" if recorded else "Follow at your comfortable range."
+    text_width = cv2.getTextSize(hint, cv2.FONT_HERSHEY_SIMPLEX, font, 1)[0][0]
+    box_width = text_width + 2 * padding
+    bottom = height - round(height * 0.09)
+    top = bottom - (len(rows) + 1) * line_height - padding
+    left = width - box_width - padding
+    cv2.rectangle(preview, (left, top), (left + box_width, bottom), BG, -1)
+    for i, (label, color, dashed) in enumerate(rows):
+        x, y = left + padding, top + (i + 1) * line_height
+        bar = max(8, round(22 * scale))
+        segment_end = x + bar
+        if dashed:
+            segment_end = x + bar // 3
+            cv2.line(preview, (x + 2 * bar // 3, y - 5), (x + bar, y - 5), color, weight + 1, cv2.LINE_AA)
+        cv2.line(preview, (x, y - 5), (segment_end, y - 5), color, weight + 1, cv2.LINE_AA)
+        draw_text(preview, label, x + bar + padding, y, font, color, weight)
+    draw_text(preview, hint, left + padding, bottom - padding, font, INK)
+
+
+def draw_mobility_guide(display, preview_width, preview_height, session):
+    exercise = EXERCISES[session.exercise]
+    guide_height = min(preview_height, 325)
+    top = (preview_height - guide_height) // 2
+    cv2.rectangle(display, (0, top), (preview_width - 1, top + guide_height - 1), BG, -1)
+    draw_text(display, f"{exercise['short'].upper()} EXAMPLE", 16, top + 26, 0.50, ACCENT)
+    floor = top + guide_height - 36
+    cv2.line(display, (12, floor), (preview_width - 12, floor), POSE_OUTLINE, 1, cv2.LINE_AA)
+    labels = ("Start", exercise["out"], exercise["peak"])
+    poses = [guide_joints(session.exercise, progress) for progress in (0, 0.55, 1)]
+    positions = [x for joints in poses for x, _ in joints.values()]
+    left, right = min(positions), max(positions)
+    panel_width = preview_width / len(poses)
+    leg = min((guide_height - 76) / 2, (panel_width - 24) / max(0.55, right - left))
+    floor_offset = {"push-up": 8 / 198, "knee-raise": 0.07}.get(session.exercise, 0)
+    for i, joints in enumerate(poses):
+        center = (i + 0.5) * panel_width
+        x = center - (left + right) / 2 * leg
+        points = {name: (round(x + px * leg), round(floor + (py - floor_offset) * leg))
+                  for name, (px, py) in joints.items()}
+        for first, second in GUIDE_CONNECTIONS:
+            if first in points and second in points:
+                color = MUTED if second.startswith("far") else ACCENT
+                cv2.line(display, points[first], points[second], color, 3, cv2.LINE_AA)
+        cv2.circle(display, points["nose"], 7, ACCENT, 2, cv2.LINE_AA)
+        label_width = cv2.getTextSize(labels[i], cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
+        draw_text(display, labels[i], round(center - label_width / 2), floor + 20, 0.4, MUTED)
+
+
 def draw_range_guide(display: np.ndarray, preview_width: int, preview_height: int, session: CaptureSession):
     if preview_width < 200:
         return
+    if session.exercise != "squat":
+        draw_mobility_guide(display, preview_width, preview_height, session)
+        return
     live = session.state["live"]
-    thigh_ratio = live["standingThighToShinRatio"] if live else 1.1
-    torso_ratio = live["standingTorsoToLegRatio"] if live else 0.6
-    max_leg = min(110, preview_height * 0.24)
+    thigh_ratio = min(1.65, max(0.70, live["standingThighToShinRatio"])) if live else 1.1
+    torso_ratio = min(0.85, max(0.35, live["standingTorsoToLegRatio"])) if live else 0.6
+    max_leg = min(110, preview_height * 0.24, preview_width * 0.19)
     shin = max_leg / (1 + thigh_ratio)
     thigh = max_leg - shin
     torso = torso_ratio * max_leg
@@ -675,12 +949,12 @@ def draw_range_guide(display: np.ndarray, preview_width: int, preview_height: in
     def pixel(position):
         return tuple(round(v) for v in position)
 
-    guide_height = min(preview_height, round(max_leg + torso + 102))
+    guide_height = min(preview_height, round(max_leg + torso + 130))
     top = (preview_height - guide_height) // 2
     cv2.rectangle(display, (0, top), (preview_width - 1, top + guide_height - 1), BG, -1)
     depth_label = ("Shallower", "Moderate", "Deeper")[session.guide_depth]
-    draw_text(display, f"SIDE VIEW GUIDE  /  {depth_label}", 20, top + 25, 0.57, ACCENT)
-    draw_text(display, "Illustrative positions. Choose a comfortable depth.", 20, top + 46, 0.43, INK)
+    draw_text(display, f"{VARIANT_LABELS[session.variant].upper()} GUIDE  /  {depth_label}", 16, top + 25, 0.52, ACCENT)
+    draw_text(display, "Choose a depth that feels comfortable.", 16, top + 46, 0.43, INK)
     floor = top + guide_height - 42
     thigh_fraction = thigh / max_leg
     moderate = 22 + degrees(acos(min(1, max(0, 0.20 / thigh_fraction))))
@@ -688,8 +962,9 @@ def draw_range_guide(display: np.ndarray, preview_width: int, preview_height: in
     sample = [
         ("Stand tall", 3, -3, 4),
         ("Lower", 15, 15 - exercise_range * 0.6, 20),
-        ("Comfortable bottom", 22, 22 - exercise_range, 32),
+        ("Bottom", 22, 22 - exercise_range, 32),
     ]
+    barbell = session.variant == "barbell"
     for i, (label, shin_angle, thigh_angle, torso_angle) in enumerate(sample):
         x = (i + 0.5) * preview_width / 3
         ankle = (x, floor - 8)
@@ -702,9 +977,45 @@ def draw_range_guide(display: np.ndarray, preview_width: int, preview_height: in
             cv2.line(display, pixel(first), pixel(second), ACCENT, 4, cv2.LINE_AA)
             cv2.circle(display, pixel(first), 4, ACCENT, -1, cv2.LINE_AA)
         cv2.circle(display, pixel(head), 8, ACCENT, 2, cv2.LINE_AA)
+        if barbell:
+            # The bar sits behind the shoulder. The near plate faces this side view.
+            bar = (shoulder[0] - max_leg * 0.07, shoulder[1] + max_leg * 0.04)
+            elbow = vector(shoulder, max_leg * 0.22, -145 + torso_angle * 0.5)
+            hand = (bar[0] + max_leg * 0.15, bar[1] - max_leg * 0.04)
+            cv2.line(display, pixel(shoulder), pixel(elbow), ACCENT, 3, cv2.LINE_AA)
+            cv2.line(display, pixel(elbow), pixel(hand), ACCENT, 3, cv2.LINE_AA)
+            plate_radius = max(6, round(max_leg * 0.105))
+            cv2.circle(display, pixel(bar), plate_radius, GUIDE_BAR, 2, cv2.LINE_AA)
+            cv2.line(display, pixel(bar), pixel(hand), GUIDE_BAR, 3, cv2.LINE_AA)
+            cv2.circle(display, pixel(bar), 3, GUIDE_BAR, -1, cv2.LINE_AA)
+            cv2.circle(display, pixel(hand), 3, INK, -1, cv2.LINE_AA)
+        else:
+            elbow = vector(shoulder, max_leg * 0.22, 117 - torso_angle * 0.3)
+            hand = vector(elbow, max_leg * 0.20, 100 - torso_angle * 0.35)
+            cv2.line(display, pixel(shoulder), pixel(elbow), ACCENT, 3, cv2.LINE_AA)
+            cv2.line(display, pixel(elbow), pixel(hand), ACCENT, 3, cv2.LINE_AA)
         cv2.line(display, (round(x - 6), floor), (round(x + 14), floor), ACCENT, 4, cv2.LINE_AA)
         width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
         draw_text(display, label, round(x - width / 2), floor + 20, 0.4, MUTED)
+
+
+def review_guide_progress(result, offset_ms):
+    elapsed = offset_ms - result["movementStartOffsetMs"]
+    metrics = result["metrics"]
+    if result["exercise"] == "squat":
+        outward, hold, returning = metrics["descentMs"], metrics["pauseMs"], metrics["ascentMs"]
+    else:
+        outward, hold, returning = metrics["outwardMs"], metrics["holdMs"], metrics["returnMs"]
+    if elapsed <= 0:
+        return 0
+    if outward > 0 and elapsed < outward:
+        return (1 - cos(pi * elapsed / outward)) / 2
+    past_peak = elapsed - outward - hold
+    if past_peak <= 0:
+        return 1
+    if returning > 0 and past_peak < returning:
+        return (1 + cos(pi * past_peak / returning)) / 2
+    return 0
 
 
 def draw_replay(display, preview_width, preview_height, session, timestamp_ms):
@@ -714,26 +1025,45 @@ def draw_replay(display, preview_width, preview_height, session, timestamp_ms):
     joints = replay_joints_at(frames, offset)
     camera = result["camera"]
     source_width, source_height = camera["width"], camera["height"]
-    crop_left, crop_width = center_crop_bounds(source_width, source_height)
+    crop_left, crop_width = (0, source_width) if result.get("source") == "video" else center_crop_bounds(
+        source_width, source_height, exercise=result["exercise"],
+    )
     scale = min((preview_width - 30) / crop_width, (preview_height - 108) / source_height)
     left = (preview_width - crop_width * scale) / 2
     top = 52 + (preview_height - 108 - source_height * scale) / 2
 
+    def source_pixels(x, y):
+        return round(left + (x - crop_left) * scale), round(top + y * scale)
+
     def pixels(point):
-        x = left + (point["x"] * source_width - crop_left) * scale
-        y = top + point["y"] * source_height * scale
-        return round(x), round(y)
+        return source_pixels(point["x"] * source_width, point["y"] * source_height)
 
     panel = display[:preview_height, :preview_width]
     panel[:] = BG
-    draw_text(panel, "REP PLAYBACK", 17, 31, 0.58, ACCENT, 2)
-    for start, end in REPLAY_CONNECTIONS:
-        if start in joints and end in joints:
-            cv2.line(panel, pixels(joints[start]), pixels(joints[end]), ACCENT, 3, cv2.LINE_AA)
+    exercise = result["exercise"]
+    variant = result.get("variant", "bodyweight")
+    label = VARIANT_LABELS[variant] if exercise == "squat" else EXERCISES[exercise]["short"]
+    draw_text(panel, f"{label.upper()} REP PLAYBACK", 17, 31, 0.51, ACCENT, 2)
+    show_training = session.review_training_visible and session.review_training_anchor is not None
+    if show_training:
+        draw_training_pose(panel, session.review_training_anchor, review_guide_progress(result, offset),
+                           exercise, variant, source_pixels, scale)
+    line_width = max(5, round(min(preview_width, preview_height) / 96))
+    radius = line_width + 1
+    segments = [(pixels(joints[start]), pixels(joints[end])) for start, end in REPLAY_CONNECTIONS
+                if start in joints and end in joints]
+    for start, end in segments:
+        cv2.line(panel, start, end, POSE_OUTLINE, line_width + 4, cv2.LINE_AA)
+    for start, end in segments:
+        cv2.line(panel, start, end, ACCENT, line_width, cv2.LINE_AA)
     for point in joints.values():
-        cv2.circle(panel, pixels(point), 4, INK, -1, cv2.LINE_AA)
+        center = pixels(point)
+        cv2.circle(panel, center, radius + 2, POSE_OUTLINE, -1, cv2.LINE_AA)
+        cv2.circle(panel, center, radius, INK, -1, cv2.LINE_AA)
     if not joints:
         draw_text(panel, "Pose unavailable here", 17, 64, 0.56, MUTED)
+    if show_training:
+        draw_training_legend(panel, joints, recorded=True)
     start = max(0, result["movementStartOffsetMs"] - 250)
     length = frames[-1]["offsetMs"] - start
     progress = min(1, (offset - start) / max(1, length))
@@ -744,85 +1074,146 @@ def draw_replay(display, preview_width, preview_height, session, timestamp_ms):
     action = "P  Pause" if session.replay_clock is not None else "P  Replay" if progress >= 1 else "P  Resume"
     elapsed = max(0, offset - start)
     draw_text(panel, f"{action}   |   X  Close   |   {elapsed / 1000:.1f} / {length / 1000:.1f}s", 17, preview_height - 17, 0.49, INK)
+    if session.review_training_anchor is not None and not show_training:
+        draw_text(panel, "T  Show training guide", 17, preview_height - 63, 0.49, GUIDE_BAR)
 
 
-def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestamp_ms: int, overlay_side=None) -> np.ndarray:
+def make_camera_preview(frame, landmarks, session, timestamp_ms, overlay_side, max_width, max_height):
     height, width = frame.shape[:2]
-    crop_left, crop_width = center_crop_bounds(width, height)
-    preview_scale = min(720 / crop_width, 555 / height)
+    crop_left, crop_width = (0, width) if session.source == "video" else center_crop_bounds(width, height, exercise=session.exercise)
+    preview_scale = min(max_width / crop_width, max_height / height)
     preview = cv2.resize(frame[:, crop_left:crop_left + crop_width], (round(crop_width * preview_scale), round(height * preview_scale)))
     live = session.state["live"]
+    training_visible = draw_training_overlay(preview, session, timestamp_ms, crop_left, crop_width, height)
     tracking_motion = session.armed or session.countdown_until is not None
     side = overlay_side if overlay_side is not None else live["side"] if live else None
-    draw_pose(preview, landmarks, side, tracking_motion, crop_left / width, crop_width / width)
-    preview_height, preview_width = preview.shape[:2]
-    display = np.full((650, preview_width + 390, 3), BG, dtype=np.uint8)
-    display[:preview_height, :preview_width] = preview
-    inset_x, inset_y = round(preview_width * 0.12), round(preview_height * 0.06)
+    draw_pose(preview, landmarks, side, tracking_motion, crop_left / width, crop_width / width,
+              reacquiring=tracking_motion and not live, uncertain=bool(session.state.get("continuitySide")),
+              exercise=session.exercise)
+    if training_visible:
+        draw_training_legend(preview, live)
+    return preview
+
+
+def draw_framing_guide(display, preview_width, preview_height, session):
+    inset_x = round(preview_width * (0.04 if session.exercise == "push-up" or session.source == "video" else 0.12))
+    inset_y = round(preview_height * 0.06)
     cv2.rectangle(display, (inset_x, inset_y), (preview_width - inset_x, preview_height - inset_y), MUTED, 1, cv2.LINE_AA)
-    if session.replay_open:
-        draw_replay(display, preview_width, preview_height, session, timestamp_ms)
-    elif session.show_guide and session.wait_until is None and not session.armed:
-        draw_range_guide(display, preview_width, preview_height, session)
-    elif not session.armed:
-        draw_text(display, "CENTER YOUR HEAD AND FEET", 17, 27, 0.43, INK)
 
-    panel_x = preview_width + 24
-    draw_text(display, "COMPOSE", panel_x, 32, 0.57, ACCENT, 1)
-    draw_text(display, "Squat Camera", panel_x, 68, 0.93, INK, 2)
-    draw_text(display, f"{session.variant.upper()}  /  CENTERED SIDE VIEW", panel_x, 98, 0.49, MUTED)
 
+def preview_status(session, timestamp_ms):
+    exercise = EXERCISES[session.exercise]
+    squat = session.exercise == "squat"
+    live = session.state["live"]
     setup = session.state["setup"]
+    center_label = ""
     if session.countdown_until is not None:
         countdown = max(0, (session.countdown_until - timestamp_ms + 999) // 1000)
         status = f"Capture starts in {countdown}" if countdown else "Waiting for a clear pose"
-        instruction = "Hold your standing position." if live else setup["message"]
+        hold = "Hold your high plank." if session.exercise == "push-up" else "Hold your starting position."
+        instruction = hold if live else setup["message"]
+        if countdown:
+            center_label = str(countdown)
     elif session.armed:
         if live:
-            rising = "Hold briefly" if live.get("finishing") else "Stand tall"
+            phase = session.state["phase"]
+            rising = "Stand tall" if squat else exercise["return"]
+            if live.get("finishing"):
+                rising = "Hold briefly"
             status = {
-                "ready": "Go when ready", "descending": "Lowering", "bottom": "Bottom", "ascending": rising,
-            }.get(session.state["phase"], "Tracking")
-            instruction = (
-                "Hold your standing position briefly to finish."
-                if live.get("finishing") else "Lower into a comfortable squat, then stand tall."
-            )
+                "ready": "Go when ready", "descending": "Lowering" if squat else exercise["out"],
+                "bottom": exercise["peak"], "ascending": rising,
+            }.get(phase, "Tracking")
+            instruction = exercise["cue"]
+            if live.get("finishing"):
+                instruction = "Hold the high plank briefly to finish." if session.exercise == "push-up" else "Hold your starting position briefly to finish."
+            elif not squat and phase != "ready":
+                instruction = setup.get("message", instruction)
         else:
             status = "Reacquiring pose"
             instruction = setup.get("message", "Waiting for a clear view of your near side.")
     elif session.wait_until is not None:
         status = "Waiting for setup"
-        instruction = setup.get("message", "Stand sideways in the center so your whole body fits.")
+        instruction = exercise["setup"] if not setup["checks"].get("sideOn") else setup.get("message", exercise["setup"])
     elif session.replay_open:
-        status = "Review your squat"
+        status = "Review your rep"
         instruction = "Play back your recorded movement as a skeleton."
+    elif session.show_guide:
+        status = f"{VARIANT_LABELS[session.variant]} example" if squat else "Movement example"
+        instruction = "Press V to switch squat type. Use + or - to change the example depth." if squat else exercise["cue"]
+        if squat and session.source == "video":
+            instruction = "Use + or - to adjust the example depth."
+    elif session.source == "video" and session.latest:
+        status = "Recorded rep saved"
+        instruction = "Press P for playback or T for the training guide." if session.review_training_anchor is not None else "Press P for playback or G for the movement example."
     elif session.latest and session.reference:
         status = "Ready for another rep" if setup["ready"] else "Check your position"
         instruction = setup.get("message", "Press Space when ready.")
     else:
         status = "Camera setup" if not setup["ready"] else "Ready to capture"
-        instruction = setup.get("message", "Stand sideways in the center so your whole body fits.")
+        instruction = setup.get("message", exercise["setup"])
 
-    center_label = ""
-    if session.countdown_until is not None and countdown:
-        center_label = str(countdown)
-    elif session.go_at is not None and timestamp_ms - session.go_at < 1000:
+    if not center_label and session.go_at is not None and timestamp_ms - session.go_at < 1000:
         center_label = "Go"
-    if center_label:
-        center = (preview_width // 2, preview_height // 2)
-        cv2.circle(display, center, 51, BG, -1, cv2.LINE_AA)
-        cv2.circle(display, center, 51, ACCENT, 2, cv2.LINE_AA)
-        label_width, label_height = cv2.getTextSize(center_label, cv2.FONT_HERSHEY_SIMPLEX, 1.4, 2)[0]
-        draw_text(display, center_label, center[0] - label_width // 2, center[1] + label_height // 2, 1.4, INK, 2)
+    return status, instruction, center_label
+
+
+def draw_countdown(display, label, center, size=1):
+    if not label:
+        return
+    radius = round(51 * size)
+    weight = max(2, round(2 * size))
+    font_size = 1.4 * size
+    cv2.circle(display, center, radius, BG, -1, cv2.LINE_AA)
+    cv2.circle(display, center, radius, ACCENT, weight, cv2.LINE_AA)
+    label_width, label_height = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, weight)[0]
+    draw_text(display, label, center[0] - label_width // 2, center[1] + label_height // 2, font_size, INK, weight)
+
+
+def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestamp_ms: int, overlay_side=None) -> np.ndarray:
+    preview = make_camera_preview(frame, landmarks, session, timestamp_ms, overlay_side, 720, 555)
+    preview_height, preview_width = preview.shape[:2]
+    display = np.full((650, preview_width + 390, 3), BG, dtype=np.uint8)
+    display[:preview_height, :preview_width] = preview
+    if session.replay_open:
+        draw_replay(display, preview_width, preview_height, session, timestamp_ms)
+    elif session.show_guide and session.wait_until is None and not session.armed:
+        draw_range_guide(display, preview_width, preview_height, session)
+    elif session.source != "video" or not session.latest:
+        draw_framing_guide(display, preview_width, preview_height, session)
+        if not session.armed:
+            label = "SHOW YOUR HEAD, HANDS AND TOES" if session.exercise == "push-up" else "CENTER YOUR HEAD AND FEET"
+            draw_text(display, label, 17, 27, 0.43, INK)
+
+    panel_x = preview_width + 24
+    exercise = EXERCISES[session.exercise]
+    squat = session.exercise == "squat"
+    draw_text(display, "COMPOSE", panel_x, 32, 0.57, ACCENT, 1)
+    title = f"{exercise['title']} camera" if squat else exercise["title"]
+    draw_text(display, title, panel_x, 68, 0.89 if squat else 0.62, INK, 2)
+    detail = session.variant.upper() if squat else "SIDE VIEW"
+    if session.source == "video":
+        training = "TRAINING GUIDE ON" if session.review_training_visible else "TRAINING GUIDE OFF"
+    elif session.training_active:
+        training = "TRAINING THIS REP"
+    else:
+        training = "NEXT REP TRAINING ON" if session.training_next else "NEXT REP TRAINING OFF"
+    draw_text(display, f"{detail}  /  {training}", panel_x, 98, 0.46, MUTED)
+    draw_text(display, "F  Fullscreen", panel_x + 237, 32, 0.57, INK, 2)
+
+    status, instruction, center_label = preview_status(session, timestamp_ms)
+    countdown_y = round(preview_height * (0.29 if session.exercise == "push-up" else 0.5))
+    draw_countdown(display, center_label, (preview_width // 2, countdown_y))
 
     draw_text(display, status, panel_x, 150, 0.72, ACCENT, 2)
     y = draw_paragraph(display, instruction, panel_x, 181) + 8
     labels = (
-        ("inFrame", "Whole body centered"),
+        ("inFrame", "Head, hands and toes visible" if session.exercise == "push-up" else "Whole body centered"),
         ("sideOn", "Facing sideways"),
-        ("standing", "Standing tall"),
-        ("steady", "Standing still"),
+        ("standing", "High plank" if session.exercise == "push-up" else "Comfortable stance"),
+        ("steady", "Starting position held"),
     )
+    setup = session.state["setup"]
     if not session.armed and not session.replay_open:
         for key, label in labels:
             passed = setup["checks"].get(key, False)
@@ -830,10 +1221,12 @@ def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestam
             draw_text(display, label, panel_x + 18, y, 0.51, INK if passed else MUTED)
             y += 23
 
-    if session.latest:
+    last_exercise = session.latest["exercise"] if session.latest else None
+    if last_exercise == "squat":
         metrics = session.latest["metrics"]
         y += 12
-        draw_text(display, f"Last rep    {metrics['descentMs'] / 1000:.1f}s down    {metrics['ascentMs'] / 1000:.1f}s up", panel_x, y, 0.51, ACCENT)
+        last_variant = VARIANT_LABELS[session.latest.get("variant", "bodyweight")]
+        draw_text(display, f"Last {last_variant.lower()} rep  {metrics['descentMs'] / 1000:.1f}s down / {metrics['ascentMs'] / 1000:.1f}s up", panel_x, y, 0.49, ACCENT)
         down = metrics["averageDescentLegLengthsPerSec"]
         up = metrics["averageAscentLegLengthsPerSec"]
         draw_text(display, f"Hip speed: {down:.2f} down / {up:.2f} up (leg lengths/s)", panel_x, y + 22, 0.43)
@@ -842,9 +1235,26 @@ def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestam
         ratio_text = f"{ratio:.2f}:1" if ratio is not None else "Unavailable"
         draw_text(display, f"Thigh / shin: {ratio_text} (projected)", panel_x, y + 66, 0.43)
         y = draw_paragraph(display, session.latest["cue"]["text"], panel_x, y + 90, INK)
+    elif last_exercise:
+        metrics = session.latest["metrics"]
+        y += 12
+        draw_text(display, f"Last {EXERCISES[last_exercise]['short'].lower()} rep", panel_x, y, 0.49, ACCENT)
+        draw_text(display, f"Time: {metrics['outwardMs'] / 1000:.1f}s out / {metrics['returnMs'] / 1000:.1f}s back", panel_x, y + 22, 0.43)
+        angular = metrics["rangeUnit"] == "degrees"
+        measured = f"{metrics['range']:.1f} degrees" if angular else f"{metrics['range']:.3f} leg lengths"
+        label = EXERCISES[last_exercise]["range_label"]
+        draw_text(display, f"{label}: {measured} (projected)", panel_x, y + 44, 0.43)
+        unit = "deg/s" if angular else "leg lengths/s"
+        out, back = metrics["averageOutwardSpeedPerSec"], metrics["averageReturnSpeedPerSec"]
+        draw_text(display, f"Speed: {out:.2f} out / {back:.2f} back {unit}", panel_x, y + 66, 0.43)
+        y = draw_paragraph(display, session.latest["cue"]["text"], panel_x, y + 90, INK)
     if session.notice:
         draw_paragraph(display, session.notice, panel_x, min(max(y + 6, 338), 500), MUTED)
 
+    snapshot_labels = PHASE_LABELS.copy()
+    if last_exercise and last_exercise != "squat":
+        info = EXERCISES[last_exercise]
+        snapshot_labels.update(descent=info["out"], bottom=info["peak"], ascent=info["return"])
     for i, (phase, image) in enumerate(session.thumbnails):
         x = panel_x + i * 68
         thumb_height, thumb_width = image.shape[:2]
@@ -853,14 +1263,205 @@ def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestam
         thumb = cv2.resize(image, (tw, th), interpolation=cv2.INTER_AREA)
         offset_x, offset_y = x + (58 - tw) // 2, 549 + (44 - th) // 2
         display[offset_y:offset_y + th, offset_x:offset_x + tw] = thumb
-        draw_text(display, PHASE_LABELS[phase], x + 2, 612, 0.38, MUTED)
+        draw_text(display, snapshot_labels[phase], x + 2, 612, 0.38, MUTED)
 
-    draw_text(display, "Space  Arm rep   |   P  Playback   |   X  Close/cancel   |   G  Guide", 22, 583, 0.51)
-    draw_text(display, "E  Save    |    C  Clear result    |    R  Recalibrate    |    Esc  Quit", 22, 615, 0.49, MUTED)
+    if session.source == "video":
+        draw_text(display, "P  Playback  |  T  Training guide  |  G  Example  |  F  Fullscreen", 22, 583, 0.43)
+        draw_text(display, "X  Close playback  |  Esc  Quit", 22, 615, 0.41, MUTED)
+    else:
+        draw_text(display, "Space  Arm  |  M  Exercise  |  G  Example  |  T  Training  |  P  Playback", 22, 583, 0.43)
+        draw_text(display, "X  Cancel  |  E  Save  |  C  Clear  |  R  Reset  |  V  Squat type  |  Esc  Quit", 22, 615, 0.41, MUTED)
     return display
 
 
-def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
+def fit_preview(display, width, height):
+    source_height, source_width = display.shape[:2]
+    scale = min(width / source_width, height / source_height)
+    fitted_width = max(1, round(source_width * scale))
+    fitted_height = max(1, round(source_height * scale))
+    canvas = np.full((height, width, 3), BG, dtype=np.uint8)
+    left, top = (width - fitted_width) // 2, (height - fitted_height) // 2
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    canvas[top:top + fitted_height, left:left + fitted_width] = cv2.resize(
+        display, (fitted_width, fitted_height), interpolation=interpolation,
+    )
+    return canvas
+
+
+def draw_fullscreen_label(image, text, x, baseline, scale, weight=1, color=INK, right=False):
+    size, below = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, weight)
+    if right:
+        x -= size[0]
+    padding = max(6, round(10 * scale))
+    cv2.rectangle(image, (x - padding, baseline - size[1] - padding),
+                  (x + size[0] + padding, baseline + below + padding // 2), BG, -1)
+    draw_text(image, text, x, baseline, scale, color, weight)
+
+
+def make_fullscreen_preview(frame, landmarks, session, timestamp_ms, overlay_side, width, height):
+    preview = make_camera_preview(frame, landmarks, session, timestamp_ms, overlay_side, width, height)
+    preview_height, preview_width = preview.shape[:2]
+    if session.replay_open or (session.show_guide and session.wait_until is None and not session.armed):
+        scale = min(1, 720 / preview_width, 555 / preview_height)
+        small_width, small_height = round(preview_width * scale), round(preview_height * scale)
+        small = cv2.resize(preview, (small_width, small_height))
+        if session.replay_open:
+            draw_replay(small, small_width, small_height, session, timestamp_ms)
+        else:
+            draw_range_guide(small, small_width, small_height, session)
+        preview = cv2.resize(small, (preview_width, preview_height))
+    elif session.source != "video" or not session.latest:
+        draw_framing_guide(preview, preview_width, preview_height, session)
+    left, top = (width - preview_width) // 2, (height - preview_height) // 2
+    display = np.full((height, width, 3), BG, dtype=np.uint8)
+    display[top:top + preview_height, left:left + preview_width] = preview
+
+    scale = min(width / 1150, height / 700)
+    weight = max(1, round(scale * 2))
+    margin = round(24 * scale)
+    status_y = round(52 * scale)
+    status, instruction, center_label = preview_status(session, timestamp_ms)
+    draw_fullscreen_label(display, status, margin, status_y, 1.22 * scale, weight, ACCENT)
+    draw_fullscreen_label(display, "F  Exit fullscreen", width - margin, status_y, 0.9 * scale, weight, right=True)
+    fullscreen_hint = session.notice if not session.armed and not session.wait_until and session.notice else instruction
+    for i, line in enumerate(textwrap.wrap(fullscreen_hint, width=62)):
+        draw_fullscreen_label(display, line, margin, round((91 + 30 * i) * scale), 0.72 * scale, weight)
+    countdown_y = round(height * (0.29 if session.exercise == "push-up" else 0.5))
+    draw_countdown(display, center_label, (width // 2, countdown_y), max(0.3, 1.55 * scale))
+    controls = "Space  Arm   |   X  Cancel/close   |   G  Example   |   P  Playback   |   E  Save"
+    if session.source == "video":
+        controls = "P  Playback   |   T  Training guide   |   G  Example   |   X  Close   |   Esc  Quit"
+    draw_fullscreen_label(display, controls, margin, height - round(28 * scale), 0.7 * scale, weight)
+    return display
+
+
+def window_size():
+    try:
+        _, _, width, height = cv2.getWindowImageRect(WINDOW)
+        if width >= 320 and height >= 240:
+            return width, height
+    except cv2.error:
+        pass
+    return 1000, 650
+
+
+def create_detector():
+    options = mp.tasks.vision.PoseLandmarkerOptions(
+        base_options=mp.tasks.BaseOptions(model_asset_path=str(MODEL_PATH)),
+        running_mode=mp.tasks.vision.RunningMode.VIDEO,
+        num_poses=1,
+        min_pose_presence_confidence=0.42,
+    )
+    return mp.tasks.vision.PoseLandmarker.create_from_options(options)
+
+
+def show_preview(frame, landmarks, session, timestamp_ms, side, fullscreen):
+    width, height = window_size()
+    if fullscreen:
+        display = make_fullscreen_preview(frame, landmarks, session, timestamp_ms, side, width, height)
+    else:
+        display = fit_preview(make_preview(frame, landmarks, session, timestamp_ms, side), width, height)
+    cv2.imshow(WINDOW, display)
+
+
+def review_video_capture(frame, landmarks, session):
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_FREERATIO)
+    cv2.resizeWindow(WINDOW, 1000, 650)
+    fullscreen = False
+    opened_at = time.monotonic()
+    session.toggle_replay(0)
+    try:
+        while cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) >= 1:
+            timestamp_ms = round((time.monotonic() - opened_at) * 1000)
+            show_preview(frame, landmarks, session, timestamp_ms, session.latest["trackingSide"], fullscreen)
+            key = cv2.waitKey(16) & 0xFF
+            if key in (27, ord("q"), ord("Q")):
+                break
+            if key in (ord("f"), ord("F")):
+                fullscreen = not fullscreen
+                mode = cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL
+                cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, mode)
+            elif key in (ord("p"), ord("P")):
+                session.show_guide = False
+                session.toggle_replay(timestamp_ms)
+            elif key in (ord("t"), ord("T")):
+                if session.review_training_anchor is None:
+                    session.notice = "Guide unavailable for this starting pose. Press G for the movement example."
+                else:
+                    session.show_guide = False
+                    session.review_training_visible = not session.review_training_visible
+                    if not session.replay_open:
+                        session.toggle_replay(timestamp_ms)
+            elif key in (ord("x"), ord("X")):
+                session.show_guide = False
+                session.close_replay()
+            elif key in (ord("g"), ord("G")):
+                session.close_replay()
+                session.show_guide = not session.show_guide
+            elif session.show_guide and session.exercise == "squat" and key in (ord("+"), ord("="), ord("-")):
+                session.guide_depth = min(2, max(0, session.guide_depth + (-1 if key == ord("-") else 1)))
+    finally:
+        cv2.destroyAllWindows()
+
+
+def run_video(path: Path, output: Path, variant="bodyweight", exercise="squat", review=False, training=False):
+    if not path.is_file():
+        raise RuntimeError(f"Video file not found: {path}")
+    video = cv2.VideoCapture(str(path))
+    session = CaptureSession(output, variant, exercise, source="video")
+    try:
+        if not video.isOpened():
+            raise RuntimeError(f"Could not open {path.name}. Check that it is a readable video file.")
+        fps = video.get(cv2.CAP_PROP_FPS)
+        frame_interval = 1000 / fps if isfinite(fps) and fps > 0 else None
+        previous_time = None
+        next_sample_at = 0
+        last_discard = ""
+        print(f"Analyzing {path.name} locally for one {EXERCISES[exercise]['title'].lower()}.", flush=True)
+        with create_detector() as detector:
+            while True:
+                ok, frame = video.read()
+                if not ok:
+                    break
+                time_ms = video.get(cv2.CAP_PROP_POS_MSEC)
+                if not isfinite(time_ms) or time_ms < 0 or (previous_time is not None and time_ms <= previous_time):
+                    if frame_interval is None:
+                        raise RuntimeError("The video does not have readable timestamps. Try exporting it as a standard MP4.")
+                    time_ms = 0 if previous_time is None else previous_time + frame_interval
+                previous_time = time_ms
+                timestamp_ms = round(time_ms)
+                if timestamp_ms + 2 < next_sample_at:
+                    continue
+                elapsed_intervals = max(1, int((timestamp_ms + 2 - next_sample_at) / POSE_INTERVAL_MS) + 1)
+                next_sample_at += elapsed_intervals * POSE_INTERVAL_MS
+                if session.wait_until is None:
+                    last_discard = session.notice or last_discard
+                    session.training_next = training
+                    session.start(timestamp_ms)
+                landmarks = detect_centered_pose(detector, frame, timestamp_ms, exercise, full_frame=True)
+                session.update(frame, landmarks, timestamp_ms)
+                if session.latest:
+                    break
+        if previous_time is None:
+            raise RuntimeError(f"Could not decode any video frames in {path.name}.")
+        if not session.latest:
+            detail = session.notice or last_discard or session.state["setup"].get("message")
+            message = "No complete rep found. Include a clear side view and hold the starting and ending positions in the video."
+            raise RuntimeError(f"{message} {detail}" if detail else message)
+    finally:
+        video.release()
+    if session.save() is None:
+        raise RuntimeError(f"Could not write the rep to {output}.")
+    if training:
+        if session.review_training_anchor is None:
+            print("The guide could not align to the recorded starting pose.")
+        elif not review:
+            print("Training guide aligned. Add --review to see it alongside the recorded skeleton.")
+    if review:
+        review_video_capture(frame, landmarks, session)
+
+
+def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight", exercise="squat", training=False):
     camera = cv2.VideoCapture(index)
     try:
         if not camera.isOpened():
@@ -869,22 +1470,17 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         camera.set(cv2.CAP_PROP_FPS, 30)
 
-        options = mp.tasks.vision.PoseLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(MODEL_PATH)),
-            running_mode=mp.tasks.vision.RunningMode.VIDEO,
-            num_poses=1,
-            min_pose_presence_confidence=0.42,
-        )
-        session = CaptureSession(output, variant)
+        session = CaptureSession(output, variant, exercise, training)
         opened_at = time.monotonic()
         session.start(0)
         next_sample_at = 0
         last_frame = opened_at
         preview_frame = None
         overlay = LiveOverlay()
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW, 1000, 600)
-        with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
+        fullscreen = False
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_FREERATIO)
+        cv2.resizeWindow(WINDOW, 1000, 650)
+        with create_detector() as detector:
             while cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) >= 1:
                 ok, frame = camera.read()
                 now = time.monotonic()
@@ -899,10 +1495,11 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
                         break
                     continue
                 if timestamp_ms + 2 >= next_sample_at:
-                    landmarks = detect_centered_pose(detector, frame, timestamp_ms) if ok else None
+                    landmarks = detect_centered_pose(detector, frame, timestamp_ms, session.exercise) if ok else None
                     session.update(preview_frame, landmarks, timestamp_ms)
                     live = session.state["live"]
-                    overlay.update(landmarks, live["side"] if live else None, timestamp_ms)
+                    side = live["side"] if live else session.state.get("continuitySide")
+                    overlay.update(landmarks, side, timestamp_ms)
                     if session.go_at == timestamp_ms and not quiet:
                         play_go_sound()
                     elapsed_intervals = max(1, int((timestamp_ms + 2 - next_sample_at) / POSE_INTERVAL_MS) + 1)
@@ -910,11 +1507,15 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
 
                 preview_time = round((time.monotonic() - opened_at) * 1000)
                 render_points, render_side = overlay.at(preview_time)
-                cv2.imshow(WINDOW, make_preview(preview_frame, render_points, session, preview_time, render_side))
+                show_preview(preview_frame, render_points, session, preview_time, render_side, fullscreen)
                 key = cv2.waitKey(1 if ok else 20) & 0xFF
                 if key in (27, ord("q")):
                     break
-                if key == ord(" "):
+                if key in (ord("f"), ord("F")):
+                    fullscreen = not fullscreen
+                    mode = cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL
+                    cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, mode)
+                elif key == ord(" "):
                     session.start(timestamp_ms)
                 elif key in (ord("x"), ord("X")):
                     if session.replay_open:
@@ -930,12 +1531,18 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
                     session.clear_result()
                 elif key in (ord("p"), ord("P")):
                     session.toggle_replay(timestamp_ms)
+                elif key in (ord("v"), ord("V")):
+                    session.toggle_variant()
+                elif key in (ord("m"), ord("M")):
+                    session.cycle_exercise()
+                elif key in (ord("t"), ord("T")):
+                    session.toggle_training()
                 elif key in (ord("g"), ord("G")):
                     session.close_replay()
                     session.show_guide = not session.show_guide
                     if session.show_guide and session.wait_until is not None:
                         session.cancel()
-                elif session.show_guide and key in (ord("+"), ord("="), ord("-")):
+                elif session.show_guide and session.exercise == "squat" and key in (ord("+"), ord("="), ord("-")):
                     change = -1 if key == ord("-") else 1
                     session.guide_depth = min(2, max(0, session.guide_depth + change))
     finally:
@@ -945,18 +1552,30 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--camera", type=int, default=0, help="OpenCV webcam index (default: 0)")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--camera", type=int, default=0, help="OpenCV webcam index (default: 0)")
+    inputs.add_argument("--video", type=Path, help="analyze the first complete rep in a local video file and save its JSON")
+    parser.add_argument("--review", action="store_true", help="open the recorded rep in the desktop preview when --video finishes")
     parser.add_argument("--output", type=Path, default=Path("captures"), help="folder for your exported rep JSON")
     parser.add_argument("--quiet", action="store_true", help="skip the Windows cue sound when capture begins")
-    parser.add_argument("--variant", choices=("bodyweight", "barbell"), default="bodyweight", help="label the squat in the export")
+    parser.add_argument("--variant", choices=tuple(VARIANT_LABELS), default="bodyweight",
+                        help="initial squat type for the guide and capture (press V to switch when idle)")
+    parser.add_argument("--exercise", choices=tuple(EXERCISES), default="squat",
+                        help="initial exercise (press M to switch when idle)")
+    parser.add_argument("--training", action="store_true", help="show the training guide for the first live rep or in --video --review")
     args = parser.parse_args()
     if args.camera < 0:
         parser.error("--camera must be zero or greater")
+    if args.review and not args.video:
+        parser.error("--review requires --video")
     if not MODEL_PATH.is_file():
         print(f"Pose model missing at {MODEL_PATH}", file=sys.stderr)
         return 1
     try:
-        run_camera(args.camera, args.output, args.quiet, args.variant)
+        if args.video:
+            run_video(args.video, args.output, args.variant, args.exercise, args.review, args.training)
+        else:
+            run_camera(args.camera, args.output, args.quiet, args.variant, args.exercise, args.training)
     except (RuntimeError, cv2.error) as error:
         print(error, file=sys.stderr)
         return 1

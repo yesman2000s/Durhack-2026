@@ -3,13 +3,13 @@ import simdLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm
 import simdBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm?url';
 import fallbackLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js?url';
 import fallbackBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm?url';
-import { centerCameraCrop, sourceLandmarks } from './camera-crop.js';
+import { centerCameraCrop, poseCameraCrop, sourceLandmarks } from './camera-crop.js';
 import { nextPoseSampleTime, POSE_SAMPLE_INTERVAL_MS } from './pose-cadence.js';
 
 const stalledVideoMs = 200;
 const modelAssetPath = `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`;
 
-async function createLandmarker() {
+export async function createLandmarker() {
   const simd = await FilesetResolver.isSimdSupported();
   return PoseLandmarker.createFromOptions({
     wasmLoaderPath: simd ? simdLoader : fallbackLoader,
@@ -37,8 +37,9 @@ function describeCameraError(error) {
   });
 }
 
-export function createCamera(video, { onFrame, onError }) {
+export function createCamera(video, { onFrame, onError, initialExercise = 'squat' }) {
   let active = null;
+  let exercise = initialExercise;
   const cropCanvas = document.createElement('canvas');
   const cropContext = cropCanvas.getContext('2d', { alpha: false });
 
@@ -88,12 +89,14 @@ export function createCamera(video, { onFrame, onError }) {
       session.nextSampleAt ??= timestampMs;
       if (timestampMs + 4 >= session.nextSampleAt) {
         try {
-          const crop = cropContext ? centerCameraCrop(width, height) : { left: 0, width };
+          const wideView = exercise === 'push-up';
+          const crop = wideView ? { left: 0, width } : centerCameraCrop(width, height);
+          const modelCrop = !wideView && cropContext ? poseCameraCrop(width, height) : { left: 0, width };
           let inferenceSource = video;
-          if (crop.width < width) {
-            if (cropCanvas.width !== crop.width) cropCanvas.width = crop.width;
+          if (modelCrop.width < width) {
+            if (cropCanvas.width !== modelCrop.width) cropCanvas.width = modelCrop.width;
             if (cropCanvas.height !== height) cropCanvas.height = height;
-            cropContext.drawImage(video, crop.left, 0, crop.width, height, 0, 0, crop.width, height);
+            cropContext.drawImage(video, modelCrop.left, 0, modelCrop.width, height, 0, 0, modelCrop.width, height);
             inferenceSource = cropCanvas;
           }
           const result = session.landmarker.detectForVideo(inferenceSource, timestampMs);
@@ -101,7 +104,7 @@ export function createCamera(video, { onFrame, onError }) {
           session.lastSampleAt = timestampMs;
           session.crop = crop;
           onFrame({
-            landmarks: sourceLandmarks(result.landmarks[0] ?? null, width, crop),
+            landmarks: sourceLandmarks(result.landmarks[0] ?? null, width, modelCrop),
             timestampMs,
             width,
             height,
@@ -189,5 +192,5 @@ export function createCamera(video, { onFrame, onError }) {
     schedule(session);
   }
 
-  return { start, stop };
+  return { start, stop, setExercise(next) { exercise = next; } };
 }
