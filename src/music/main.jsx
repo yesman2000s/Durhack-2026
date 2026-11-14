@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { EXCERPT_BEATS, loadStem, playReward, rewardBeats } from './beat.js';
-import { applyExerciseResult, demoStreaks, exercises } from './progression.js';
+import { applyExerciseResult, demoStreaks, exercisePart, exercises } from './progression.js';
 import { songs, sourceUrl } from './songs.js';
 import './studio.css';
 
@@ -19,9 +19,10 @@ function Studio() {
   const loadedStems = useRef(new Map());
 
   const exercise = exercises.find(({ id }) => id === selected);
-  const hasStem = song.stems.includes(exercise.stem);
+  const part = exercisePart(song, exercise);
   const streak = streaks[selected];
-  const beats = rewardBeats(streak);
+  const beats = rewardBeats(streak, part);
+  const maxBeats = EXCERPT_BEATS - part.startBeat;
   const validTestStreak = /^\d+$/.test(testStreak) && Number.isSafeInteger(Number(testStreak));
 
   useEffect(() => () => {
@@ -52,10 +53,10 @@ function Studio() {
     const next = applyExerciseResult(streaks, result);
     setStreaks(next);
     stopPlayback();
-    const length = rewardBeats(next[selected]);
+    const length = rewardBeats(next[selected], part);
     const completed = exercise.name + ': streak ' + next[selected] + ' days.';
-    if (!length || !hasStem) {
-      setMessage(completed + (hasStem ? ' No section unlocked yet.' : ' This song has no usable stem for this exercise.'));
+    if (!length) {
+      setMessage(completed + ' No section unlocked yet.');
       return;
     }
 
@@ -64,11 +65,11 @@ function Studio() {
     try {
       context.current ??= new AudioContext();
       await context.current.resume();
-      const key = song.id + '/' + exercise.stem;
+      const key = song.id + '/' + part.stem;
       if (!loadedStems.current.has(key)) {
-        loadedStems.current.set(key, await loadStem(context.current, song, exercise));
+        loadedStems.current.set(key, await loadStem(context.current, song, part));
       }
-      const stop = playReward(context.current, song, loadedStems.current.get(key), length, () => {
+      const stop = playReward(context.current, song, part, loadedStems.current.get(key), length, () => {
         if (playback.current === stop) {
           playback.current = null;
           setPlaying(false);
@@ -77,7 +78,7 @@ function Studio() {
       });
       playback.current = stop;
       setPlaying(true);
-      setMessage(completed + ' Playing ' + length + (length === 1 ? ' beat of ' : ' beats of ') + exercise.instrument.toLowerCase() + '.');
+      setMessage(completed + ' Playing ' + part.name.toLowerCase() + '.');
     } catch {
       setError('The reward audio could not play. Try Mock success again.');
     } finally {
@@ -125,24 +126,26 @@ function Studio() {
           }}>Stop reward</button>
         </div>
         <ul className="tracks" aria-label="Exercise tracks">
-          {exercises.map((track) => <li key={track.id} style={{ '--track-color': track.color }}>
-            <button type="button" className="track-select" aria-pressed={track.id === selected}
-              aria-controls="exercise-detail" disabled={loading} onClick={() => chooseExercise(track.id)}>
-              <span className="track-dot" aria-hidden="true" />
-              <span><strong>{track.name}</strong><small>{track.instrument}</small></span>
-              <small>{song.stems.includes(track.stem) ? rewardBeats(streaks[track.id]) + ' beats unlocked' : 'Unavailable in this song'}</small>
-            </button>
-          </li>)}
+          {exercises.map((track) => {
+            const trackPart = exercisePart(song, track);
+            return <li key={track.id} style={{ '--track-color': track.color }}>
+              <button type="button" className="track-select" aria-pressed={track.id === selected}
+                aria-controls="exercise-detail" disabled={loading} onClick={() => chooseExercise(track.id)}>
+                <span className="track-dot" aria-hidden="true" />
+                <span><strong>{track.name}</strong><small>{trackPart.name}</small></span>
+                <small>{rewardBeats(streaks[track.id], trackPart)} beats unlocked</small>
+              </button>
+            </li>;
+          })}
         </ul>
         <p className="credits"><a href={sourceUrl(song)}>Kevin MacLeod</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · excerpt split into instrument stems</p>
       </section>
 
       <section id="exercise-detail" className="exercise-detail" aria-labelledby="exercise-title">
-        <h2 id="exercise-title">{exercise.name} · {exercise.instrument}</h2>
+        <h2 id="exercise-title">{exercise.name} · {part.name}</h2>
         <p>{streak} {streak === 1 ? 'day' : 'days'} in a row</p>
-        {hasStem && <p>{beats} of {EXCERPT_BEATS} beats unlocked · {Number((beats * 60 / song.bpm).toFixed(1))} seconds</p>}
-        {hasStem && beats === EXCERPT_BEATS && <p>Full excerpt unlocked. Your streak can keep growing.</p>}
-        {!hasStem && <p>This song has no usable {exercise.instrument.toLowerCase()} stem.</p>}
+        <p>{beats} of {maxBeats} beats unlocked · {Number((beats * 60 / song.bpm).toFixed(2))} seconds</p>
+        {beats === maxBeats && <p>Full excerpt unlocked. Your streak can keep growing.</p>}
         <div className="demo-results" role="group" aria-label="Mock backend results">
           <label className="field">Test streak (days)
             <input type="number" min="0" step="1" value={testStreak} disabled={loading}

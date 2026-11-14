@@ -15,11 +15,11 @@ Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use th
 
 ## Try the music studio
 
-Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. The reward plays just that exercise’s instrument from the start through the furthest unlocked beat, then stops. Each day adds one beat at the song’s tempo. The excerpt has 112 beats and the streak counter can keep growing after all audio is unlocked. **Mock failure** leaves progress as it was and triggers no reward. **Reset demo** restores the starting streaks.
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. The reward plays just that exercise’s part through the latest unlocked point, then stops. Day one plays a single sixteenth note (a quarter beat) and each additional day adds another sixteenth note. The 112-beat excerpts provide roughly 448 daily unlocks. The streak counter can keep growing after all audio is unlocked. **Mock failure** triggers no reward. **Reset demo** restores the starting streaks.
 
 The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
 
-The demo ships 28-bar excerpts of three Kevin MacLeod instrumentals, trimmed to the beat grid and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). “Other instruments” is Demucs's residual instrument stem. The vocal estimate and near-silent guitar and piano estimates are excluded. Rock includes all five instrument tracks.
+The demo ships 28-bar excerpts of three Kevin MacLeod instrumentals, trimmed to the beat grid and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock uses drums, bass, guitar, piano and the residual instrument stem. Hip-hop and EDM use bass, the residual instrument stem and three frequency bands filtered from drums with FFmpeg. The percussion bands contain overlapping sounds from the drum stem. The vocal estimate is excluded, and each genre has five playable parts.
 
 - Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
 - EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)

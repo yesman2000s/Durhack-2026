@@ -8,6 +8,18 @@ export const exercises = [
 
 export const demoStreaks = { squat: 3, 'step-up': 3, 'calf-raise': 1, 'wall-push-up': 4, lunge: 0 };
 
+export function exercisePart(song, exercise) {
+  if (song.percussionParts) {
+    switch (exercise.stem) {
+      case 'drums': return { stem: 'drums-low', name: 'Low percussion', startBeat: 0 };
+      case 'guitar': return { stem: 'drums-mid', name: 'Mid percussion', startBeat: 0 };
+      case 'piano': return { stem: 'drums-high', name: 'High percussion', startBeat: 0 };
+    }
+  }
+  const startBeat = { bass: song.bassLeadIn, guitar: song.guitarLeadIn }[exercise.stem] ?? 0;
+  return { stem: exercise.stem, name: exercise.instrument, startBeat };
+}
+
 export function applyExerciseResult(streaks, result) {
   if (result?.success !== true || !exercises.some(({ id }) => id === result.exerciseId)) return streaks;
   const { exerciseId, streak } = result;
