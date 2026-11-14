@@ -534,6 +534,7 @@ function App() {
   return <div className="app-shell">
     <header className="app-header">
       <div className="wordmark"><span className="brand-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 11h3l2.5-6 3.5 9 2-4h3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></span> COMPOSE</div>
+      <a className="privacy-badge" href="./music.html">Music studio</a>
       <span className="privacy-badge"><Icon name="shield" />Local camera capture</span>
     </header>
     <main className="main">

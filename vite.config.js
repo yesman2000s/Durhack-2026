@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 import { formScoringRoute } from './server/form-scoring.js';
 import { feedbackSpeechRoute } from './server/feedback-speech.js';
@@ -24,6 +25,14 @@ export default defineConfig(({ mode }) => {
     }],
     optimizeDeps: {
       include: ['@mediapipe/tasks-vision'],
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          camera: fileURLToPath(new URL('./index.html', import.meta.url)),
+          music: fileURLToPath(new URL('./music.html', import.meta.url)),
+        },
+      },
     },
   };
 });

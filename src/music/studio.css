@@ -1,0 +1,69 @@
+:root {
+  font-family: "Inter", system-ui, sans-serif;
+  color: #eef5f1;
+  background: #101918;
+  color-scheme: dark;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1, h2, p { margin: 0; }
+button, select, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+:focus-visible { outline: 2px solid #b7f5cf; outline-offset: 4px; }
+a { color: inherit; }
+.studio { max-width: 1050px; padding: 0 clamp(16px, 5vw, 64px) 48px; margin: auto; }
+.studio-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22px 0;
+  border-bottom: 1px solid #394946;
+}
+.studio-nav a { font-size: .9rem; text-underline-offset: .25em; }
+.studio-nav .wordmark { font-size: 1rem; font-weight: 850; letter-spacing: .12em; text-decoration: none; }
+.wordmark span { color: #b7f5cf; }
+.studio-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 40px 0 26px;
+}
+h1 { font-size: clamp(2rem, 6vw, 3.7rem); letter-spacing: -.055em; line-height: 1.03; }
+h2 { font-size: 1.2rem; }
+p, small { color: #bacac5; }
+.studio-intro p, .transport p, .exercise-detail p { margin-top: 6px; }
+.demo-results { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 14px; }
+.field { display: grid; gap: 5px; font-size: .85rem; color: #bacac5; }
+.field input { width: 9rem; }
+.field select, .field input, .demo-results button { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
+.credits { margin-top: 14px; font-size: .8rem; }
+.mixer, .exercise-detail {
+  margin: 0 0 16px;
+  border: 1px solid #394946;
+  background: #172220;
+  border-radius: 16px;
+  padding: clamp(14px, 4vw, 24px);
+}
+.transport { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.play { min-width: 88px; padding: 10px 14px; border: 0; border-radius: 8px; font-weight: 750; color: #101918; background: #b7f5cf; }
+.tracks { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; }
+.track-select {
+  width: 100%;
+  color: inherit;
+  background: #202d2a;
+  border: 1px solid #394946;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.track-select[aria-pressed="true"] { border-color: var(--track-color); }
+.track-select small { display: block; margin-top: 3px; }
+.track-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--track-color); }

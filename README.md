@@ -13,6 +13,20 @@ npm.cmd run dev
 
 Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use the address Vite prints. Click **Start camera** and grant camera access. **Try simulated example** runs the same capture and export flow without a webcam; it uses generated landmarks and is labeled in the export. The camera only runs from localhost or HTTPS. The project ships the [MediaPipe Pose Landmarker Lite model](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker) and serves the runtime locally, so it needs no external services while the app is running.
 
+## Try the music studio
+
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. Only the selected exercise's streak updates. All unlocked parts start together from the same point in the recording, and each fades out at its own unlocked length. The mix ends when the longest part finishes. Each streak day adds one sixteenth note (a quarter beat) to its part. The 112-beat excerpts provide 448 daily unlocks. The streak counter can keep growing after all audio is unlocked. **Mock failure** triggers no reward. **Reset demo** restores the starting streaks.
+
+The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
+
+The demo ships 28-bar excerpts of three Kevin MacLeod instrumentals, trimmed to the beat grid and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock uses drums, bass, guitar, piano and the residual instrument stem. Hip-hop and EDM use bass, the residual instrument stem and three frequency bands filtered from drums with FFmpeg. The percussion bands contain overlapping sounds from the drum stem. The vocal estimate is excluded, and each genre has five playable parts.
+
+- Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
+- EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)
+- Rock · [Jet Fueled Vixen](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1700079)
+
+All three recordings are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Run the Python version
 
 Use 64-bit Python 3.12 and a desktop session. From this directory:
