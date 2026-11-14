@@ -86,13 +86,12 @@ export function makeEvidence({ rep, images, motionTrace, captureStartMs, source,
   };
 }
 
+export function exportSnapshot({ url, timestampMs, ...snapshot }) {
+  return { ...snapshot, mimeType: 'image/jpeg', imageBase64: url.slice(url.indexOf(',') + 1) };
+}
+
 export function downloadEvidence(evidence) {
-  const payload = {
-    ...evidence,
-    snapshots: evidence.snapshots.map(({ url, timestampMs, ...snapshot }) => ({
-      ...snapshot, mimeType: 'image/jpeg', imageBase64: url.slice(url.indexOf(',') + 1),
-    })),
-  };
+  const payload = { ...evidence, snapshots: evidence.snapshots.map(exportSnapshot) };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

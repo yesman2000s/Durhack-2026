@@ -6,6 +6,7 @@ import { poseInCenter } from './camera-crop.js';
 import { createPosePreview } from './pose-preview.js';
 import { makeMotionTrace, recordPose } from './motion-trace.js';
 import { SkeletonPlayback } from './skeleton-playback.jsx';
+import { FormFeedback } from './form-feedback.jsx';
 import { captureImage, downloadEvidence, FORM_GUIDE, framePose, makeEvidence, PHASE_LABELS } from './evidence.js';
 import './styles.css';
 
@@ -143,6 +144,7 @@ function RepResult({ result, onClear, titleRef }) {
         {mainValues.map(renderMetric)}
       </dl>
     </div>
+    {result.snapshots.length > 0 && <FormFeedback rep={result} />}
     {Number.isFinite(m.thighToShinRatio) && <p className="leg-ratio">
       <strong>Thigh to shin</strong><strong>{ratio(m.thighToShinRatio)}</strong>
       <span>Hip to knee ÷ knee to ankle, estimated from the side view.</span>
@@ -532,7 +534,7 @@ function App() {
   return <div className="app-shell">
     <header className="app-header">
       <div className="wordmark"><span className="brand-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 11h3l2.5-6 3.5 9 2-4h3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></span> COMPOSE</div>
-      <span className="privacy-badge"><Icon name="shield" />Video stays on this device</span>
+      <span className="privacy-badge"><Icon name="shield" />Local camera capture</span>
     </header>
     <main className="main">
       <div className="page-intro">

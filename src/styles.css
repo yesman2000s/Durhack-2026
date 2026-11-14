@@ -642,6 +642,17 @@ button:enabled { cursor: pointer; }
 
 .result-evidence { min-width: 0; }
 
+.form-feedback {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.form-feedback h3 { margin: 0; }
+.form-feedback p { margin: 8px 0; }
+.form-feedback ul { margin: 8px 0 0; padding-inline-start: 22px; }
+.form-feedback .button { margin-top: 4px; }
+
 .snapshots-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
