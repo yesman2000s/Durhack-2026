@@ -371,7 +371,7 @@ function App() {
   return <div className="app-shell">
     <header className="app-header">
       <div className="wordmark"><span className="brand-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 11h3l2.5-6 3.5 9 2-4h3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></span> COMPOSE</div>
-      <span className="header-title">Camera studio</span><span className="privacy-badge">Video stays on this device</span>
+      <span className="header-title">Camera studio</span><a className="privacy-badge" href="./music.html">Music studio</a><span className="privacy-badge">Video stays on this device</span>
     </header>
     <main className="main">
       <div className="page-intro"><p className="eyebrow">MOVEMENT LAB / 01</p><h1>Squat camera<span aria-hidden="true">.</span></h1><p className="intro-copy">Step into a side view and capture one bodyweight squat, hands-free.</p></div>
