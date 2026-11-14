@@ -4,10 +4,12 @@ const SIDES = {
 };
 const PHASE_ORDER = ["start", "descent", "bottom", "ascent", "finish"];
 const CALIBRATION_MS = 2000;
+const CALIBRATION_GAP_MS = 220;
 const STANDING_REFERENCE_MS = 450;
 const FINISH_HOLD_MS = 500;
 const FINISH_GRACE_MS = 250;
 const MAX_FRAME_GAP_MS = 300;
+const MAX_CAPTURE_GAP_MS = 400;
 const FOOT_SHIFT_MS = 150;
 const MAX_REP_MS = 20000;
 const DEG_PER_RAD = 180 / Math.PI;
@@ -16,6 +18,13 @@ const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 const round = (value, places = 0) => Number(value.toFixed(places));
 const roundIfMeasured = (value, places) => value === null ? null : round(value, places);
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const hipHeight = (sample) => sample.ankleY - sample.hipY;
+
+function median(values) {
+  const sorted = values.toSorted((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
 
 function jointAngle(first, joint, last) {
   const a = { x: first.x - joint.x, y: first.y - joint.y };
@@ -119,7 +128,8 @@ function inspectPose(landmarks, width, height, fixedSide, baseline, tracking, fo
     if (!shoulder) return { reason: "shoulder" };
     if (![nose, ...feet].every(isInFrame) || nose.y <= marginY + torsoLength * 0.16) return { reason: "edges" };
     if (shoulderSpan !== null && hipSpan !== null) {
-      sideOn = (shoulderSpan <= 0.35 && hipSpan <= 0.26) || (narrowHips && shoulderSpan <= 0.60);
+      sideOn = (shoulderSpan <= 0.35 && hipSpan <= 0.26) || (narrowHips && shoulderSpan <= 0.60) ||
+        (shoulderSpan <= 0.39 && hipSpan <= 0.285 && kneeSpan !== null && kneeSpan <= 0.22);
     } else {
       const availableSpan = hipSpan ?? shoulderSpan;
       sideOn = availableSpan !== null ? availableSpan <= 0.20 : Math.abs(nose.x - shoulder.x) / legLength >= 0.09;
@@ -201,10 +211,37 @@ function capture(rep, phase, sample, events) {
   events.push({ type: "capture", repId: rep.id, ...frame });
 }
 
-function isDeeper(sample, previous, baseline) {
-  const hipChange = (sample.hipY - previous.hipY) / baseline.legLength;
-  const kneeChange = previous.kneeAngle - sample.kneeAngle;
-  return hipChange > 0.007 || (hipChange >= -0.007 && kneeChange > 2);
+function motionCandidate(rep, sample, events) {
+  rep.samples.push(sample);
+  events.push({
+    type: "capture-candidate", repId: rep.id, timestampMs: sample.time,
+    kneeAngleDeg: round(sample.kneeAngle, 1),
+  });
+}
+
+function closestMiddle(samples, fromTime, toTime, target, depth, ascending = false) {
+  let best = null;
+  let error = Infinity;
+  for (const sample of samples) {
+    const progress = ascending ? 1 - sample.drop / depth : sample.drop / depth;
+    if (sample.time < fromTime || sample.time >= toTime || progress < 0.12 || progress > 0.92) continue;
+    const distance = Math.abs(sample.drop - target);
+    if (distance + 1e-9 < error) {
+      best = sample;
+      error = distance;
+    }
+  }
+  return best;
+}
+
+function finalizeCaptures(rep, finish, events) {
+  const bottom = rep.bottom;
+  const descent = closestMiddle(rep.samples, rep.frames.start.timestampMs, bottom.time, bottom.drop * 0.5, bottom.drop);
+  const ascent = closestMiddle(rep.samples, bottom.time + 0.001, rep.firstStanding.time, bottom.drop * 0.5, bottom.drop, true);
+  if (descent) capture(rep, "descent", descent, events);
+  capture(rep, "bottom", bottom, events);
+  if (ascent) capture(rep, "ascent", ascent, events);
+  capture(rep, "finish", finish, events);
 }
 
 function formatRep(rep, finish, baseline) {
@@ -264,6 +301,8 @@ export class SquatTracker {
   reset() {
     this.phase = "setup";
     this.calibration = [];
+    this.calibrationObservedMs = 0;
+    this.calibrationInterrupted = false;
     this.baseline = null;
     this.previous = null;
     this.lastTime = null;
@@ -273,6 +312,7 @@ export class SquatTracker {
     this.lockedStandingAt = null;
     this.lastStandingAt = null;
     this.footShiftAt = null;
+    this.turnAt = null;
     this.attempt = null;
     this.onsetAt = null;
     this.nextRepId = 1;
@@ -298,7 +338,10 @@ export class SquatTracker {
       if (this.attempt) this.discard(events, "cancelled");
       this.onsetAt = null;
     }
-    if (this.baseline && this.lastValidTime !== null && timestampMs - this.lastValidTime > MAX_FRAME_GAP_MS) {
+    const maxGap = this.attempt ? MAX_CAPTURE_GAP_MS : MAX_FRAME_GAP_MS;
+    const turnedForTooLong = this.turnAt !== null && timestampMs - this.lastValidTime > MAX_FRAME_GAP_MS;
+    if (this.baseline && this.lastValidTime !== null &&
+        (timestampMs - this.lastValidTime > maxGap || turnedForTooLong)) {
       this.loseCalibration(events, "tracking-gap");
     }
     if (this.attempt && timestampMs - this.attempt.start.time > MAX_REP_MS) {
@@ -320,11 +363,15 @@ export class SquatTracker {
     checks.sideOn = checks.inFrame && pose.sideOn;
     if (pose.shiftedFoot) this.footShiftAt ??= timestampMs;
     else this.footShiftAt = null;
+    // A confirmed turn remains disqualifying during the more forgiving camera
+    // gap, even when the model stops reporting enough landmarks to classify it.
+    if (!tracking || checks.sideOn) this.turnAt = null;
+    else if (pose.sample) this.turnAt ??= timestampMs;
     const sustainedFootShift = this.footShiftAt !== null && timestampMs - this.footShiftAt >= FOOT_SHIFT_MS;
     if (!checks.sideOn || pose.shiftedFoot) {
       this.previous = null;
       this.onsetAt = null;
-      this.calibration = [];
+      if (!this.baseline) this.interruptCalibration(timestampMs);
       if (this.attempt) {
         this.attempt.totalFrames++;
         this.attempt.maxGap = Math.max(this.attempt.maxGap, timestampMs - this.lastValidTime);
@@ -349,10 +396,11 @@ export class SquatTracker {
       if (pose.tooFar) message = "Move a little closer while keeping your head and feet in frame.";
       if (sustainedFootShift) message = "Stand still to set your new position.";
       else if (pose.shiftedFoot) message = "Keep your foot position steady.";
-      return state(message);
+      return state(message, null, this.baseline ? 1 : this.calibrationProgress());
     }
 
-    const sample = { ...pose.sample, time: timestampMs, speed: 0 };
+    const raw = { ...pose.sample, time: timestampMs };
+    const sample = { ...raw, raw, speed: 0 };
     if (this.attempt) {
       this.attempt.maxGap = Math.max(this.attempt.maxGap, timestampMs - this.lastValidTime);
     }
@@ -360,7 +408,14 @@ export class SquatTracker {
     const previous = this.previous;
     if (previous && sample.side === previous.side && timestampMs - previous.time <= MAX_FRAME_GAP_MS) {
       const interval = timestampMs - previous.time;
-      const blend = 1 - Math.exp(-interval / 48);
+      const legLength = this.baseline?.legLength ?? raw.legLength;
+      const rawHipRate = hipDropFrom(raw, previous.raw, legLength) * 1000 / interval;
+      const rawKneeRate = (previous.raw.kneeAngle - raw.kneeAngle) * 1000 / interval;
+      // Change the filter only when the hip and knee agree on motion. Isolated
+      // landmark jitter gets more smoothing without dragging a fast reversal.
+      const motion = Math.sign(rawHipRate) === Math.sign(rawKneeRate)
+        ? clamp(Math.min(Math.abs(rawHipRate) / 0.48, Math.abs(rawKneeRate) / 90), 0, 1) : 0;
+      const blend = 1 - Math.exp(-interval / (88 - 74 * motion));
       for (const key of ["hipY", "kneeY", "kneeAngle", "hipAngle", "torsoLean", "shinLean"]) {
         if (sample[key] !== null && previous[key] !== null) {
           sample[key] = previous[key] + (sample[key] - previous[key]) * blend;
@@ -368,22 +423,22 @@ export class SquatTracker {
       }
       if (this.baseline) {
         const speed = (sample.hipY - previous.hipY) * 1000 / (interval * this.baseline.legLength);
-        sample.speed = previous.speed + (clamp(speed, -4, 4) - previous.speed) * blend;
+        sample.speed = previous.speed + (clamp(speed, -12, 12) - previous.speed) * blend;
       }
     }
     this.previous = sample;
 
-    checks.standing = sample.kneeAngle >= 153;
+    checks.standing = sample.kneeAngle >= 145 && (sample.kneeY - sample.hipY) / sample.legLength >= 0.35 &&
+      (sample.torsoLean === null || sample.torsoLean <= 25);
     if (!this.baseline) {
       checks.steady = checks.standing && this.calibrate(sample);
-      if (!checks.standing) this.calibration = [];
-      const first = this.calibration[0]?.time ?? timestampMs;
-      const progress = clamp((timestampMs - first) / CALIBRATION_MS, 0, 1);
-      if (progress === 1 && this.calibration.length >= 8) {
+      if (!checks.standing) this.interruptCalibration(timestampMs);
+      const progress = this.calibrationProgress();
+      if (checks.steady && progress === 1 && this.calibration.length >= 8) {
         this.baseline = makeBaseline(this.calibration);
         this.standingSamples = this.calibration.filter((pose) => timestampMs - pose.time <= STANDING_REFERENCE_MS);
         if (lockStanding) this.lockReference(this.standingSamples, timestampMs);
-        this.calibration = [];
+        this.clearCalibrationSamples();
         this.phase = "ready";
       } else {
         return state(checks.standing ? "Hold a comfortable standing position." : "Stand tall to calibrate.", null, progress);
@@ -403,7 +458,10 @@ export class SquatTracker {
     if (!lockStanding && !this.attempt) this.rememberStanding(sample, settled);
     if (settled && !this.attempt) this.lastStandingAt = sample.time;
     if (!armed && !settled) this.lastStandingAt = null;
-    if (armed) this.trackRep(sample, start, kneeBend, hipDrop, returnedToStanding, settled, events);
+    if (armed) {
+      const movement = { ...raw, drop: hipDropFrom(raw, start, baseline.legLength), bend: start.kneeAngle - raw.kneeAngle };
+      this.trackRep(sample, movement, start, returnedToStanding, settled, previous?.raw, events);
+    }
 
     const live = {
       side: sample.side,
@@ -430,16 +488,39 @@ export class SquatTracker {
   }
 
   calibrate(sample) {
-    const first = this.calibration[0];
     const latest = this.calibration.at(-1);
-    if (first && (sample.side !== first.side || sample.time - latest.time > MAX_FRAME_GAP_MS ||
-        Math.abs(sample.hipY - first.hipY) > first.legLength * 0.035 ||
-        Math.abs(sample.ankleX - first.ankleX) > first.legLength * 0.045 ||
-        Math.abs(sample.kneeAngle - first.kneeAngle) > 7)) {
-      this.calibration = [];
+    if (latest && (sample.side !== latest.side || sample.time - latest.time > CALIBRATION_GAP_MS)) {
+      this.clearCalibrationSamples();
     }
+    if (this.calibration.length) {
+      const recent = this.calibration.filter((pose) => sample.time - pose.time <= STANDING_REFERENCE_MS);
+      if (Math.abs(hipHeight(sample) - median(recent.map(hipHeight))) > sample.legLength * 0.065 ||
+          Math.abs(sample.ankleX - median(recent.map((pose) => pose.ankleX))) > sample.legLength * 0.075 ||
+          Math.abs(sample.kneeAngle - median(recent.map((pose) => pose.kneeAngle))) > 11) {
+        this.interruptCalibration(sample.time);
+        return false;
+      }
+      if (!this.calibrationInterrupted) this.calibrationObservedMs += sample.time - latest.time;
+    }
+    this.calibrationInterrupted = false;
     this.calibration.push(sample);
     return this.calibration.length > 1;
+  }
+
+  calibrationProgress() {
+    return Math.min(1, this.calibrationObservedMs / CALIBRATION_MS);
+  }
+
+  clearCalibrationSamples() {
+    this.calibration = [];
+    this.calibrationObservedMs = 0;
+    this.calibrationInterrupted = false;
+  }
+
+  interruptCalibration(time) {
+    const latest = this.calibration.at(-1);
+    if (latest && time - latest.time > CALIBRATION_GAP_MS) this.clearCalibrationSamples();
+    else this.calibrationInterrupted = true;
   }
 
   rememberStanding(sample, settled) {
@@ -452,13 +533,19 @@ export class SquatTracker {
     this.lockedStandingAt = timestampMs;
   }
 
-  trackRep(sample, start, kneeBend, hipDrop, standing, settled, events) {
+  trackRep(sample, movement, start, standing, settled, previousRaw, events) {
+    const { bend: kneeBend, drop: hipDrop } = movement;
     if (!this.attempt) {
-      if (settled) {
-        this.onsetAt = null;
-      } else if (this.lastStandingAt !== null && kneeBend >= 9 && hipDrop >= 0.026) {
+      if (this.lastStandingAt !== null && kneeBend >= 8 && hipDrop >= 0.022) {
         this.onsetAt ??= sample.time;
-        if (sample.time - this.onsetAt >= 85) this.startRep(sample, start, events);
+        const decisive = previousRaw && kneeBend >= 14 && hipDrop >= 0.045 &&
+          previousRaw.kneeAngle - movement.kneeAngle >= 4 &&
+          hipDropFrom(movement, previousRaw, this.baseline.legLength) >= 0.015;
+        if (decisive || sample.time - this.onsetAt >= 35) {
+          this.startRep(sample, start, events);
+          motionCandidate(this.attempt, movement, events);
+          this.observeDepth(this.attempt, movement);
+        }
       } else {
         this.onsetAt = null;
       }
@@ -468,36 +555,25 @@ export class SquatTracker {
     const rep = this.attempt;
     rep.totalFrames++;
     rep.validFrames++;
+    if (!rep.firstStanding && (!standing || this.phase !== "ascending")) motionCandidate(rep, movement, events);
     if (this.phase === "descending" || this.phase === "bottom") {
       rep.peakDown = Math.max(rep.peakDown, sample.speed);
-      if (!rep.depthConfirmed && (kneeBend < 20 || hipDrop < 0.055)) rep.depthReachedAt = null;
-      if (kneeBend >= 24 && hipDrop >= 0.07) rep.depthReachedAt ??= sample.time;
-      if (rep.depthReachedAt !== null && !rep.frames.descent) capture(rep, "descent", sample, events);
-      if (rep.depthReachedAt !== null && sample.time - rep.depthReachedAt >= 145) rep.depthConfirmed = true;
-      // Keep depth candidates while the tracker confirms sustained movement.
-      if (rep.depthReachedAt !== null && sample.time > rep.frames.descent.timestampMs && !standing) {
-        if (!rep.bottom || isDeeper(sample, rep.bottom, this.baseline)) {
-          rep.bottom = sample;
-          rep.lastAtBottom = sample;
-          capture(rep, "bottom", sample, events);
-        }
-      }
+      this.observeDepth(rep, movement);
       if (!rep.depthConfirmed && settled && sample.time - rep.onsetAt > 250) {
         this.discard(events, "incomplete-descent");
         return;
       }
       if (!rep.depthConfirmed || !rep.bottom) return;
-      if (this.phase === "descending" && (Math.abs(sample.speed) < 0.09 || sample.speed < 0 ||
-          sample.time - rep.bottom.time > 100)) {
-        this.phase = "bottom";
+      const riseHip = rep.bottom.drop - hipDrop;
+      const riseKnee = rep.bottom.bend - kneeBend;
+      if (riseHip <= 0.012 && Math.abs(riseKnee) < 5) {
+        rep.lastAtBottom = movement;
+        if (sample.time - rep.bottom.time >= 85 && Math.abs(sample.speed) < 0.12) this.phase = "bottom";
       }
-      const riseHip = (rep.bottom.hipY - sample.hipY) / this.baseline.legLength;
-      const riseKnee = sample.kneeAngle - rep.bottom.kneeAngle;
-      if (riseHip <= 0.012 && Math.abs(riseKnee) < 5) rep.lastAtBottom = sample;
-      if (riseHip >= 0.018 && riseKnee >= 8) {
+      if (riseHip >= 0.018 && riseKnee >= 6) {
         rep.riseAt ??= sample.time;
         rep.risePeak = Math.max(rep.risePeak, -sample.speed);
-        if (sample.time - rep.riseAt >= 180) {
+        if ((riseHip >= 0.055 && riseKnee >= 12) || sample.time - rep.riseAt >= 35) {
           this.phase = "ascending";
           rep.peakUp = rep.risePeak;
         }
@@ -509,29 +585,44 @@ export class SquatTracker {
 
     if (this.phase !== "ascending") return;
     rep.peakUp = Math.max(rep.peakUp, -sample.speed);
-    const rise = rep.bottom.hipY - sample.hipY;
-    if (!rep.frames.ascent && rise >= (rep.bottom.hipY - rep.start.hipY) * 0.38) {
-      capture(rep, "ascent", sample, events);
-    }
-    if (rise / this.baseline.legLength < -0.045) {
+    if (rep.bottom.drop - hipDrop < -0.045) {
       this.discard(events, "second-descent");
       return;
     }
     if (!this.confirmFinish(rep, sample, kneeBend, hipDrop, standing)) return;
-    if (rep.validFrames / rep.totalFrames < 0.9) {
+    if (rep.validFrames / rep.totalFrames < 0.85) {
       this.discard(events, "low-confidence");
       return;
     }
-    if (!rep.frames.ascent) {
-      this.discard(events, "incomplete-ascent");
-      return;
-    }
-    capture(rep, "finish", sample, events);
+    finalizeCaptures(rep, sample, events);
     events.push({ type: "rep-complete", rep: formatRep(rep, sample, this.baseline) });
     this.attempt = null;
     this.phase = "ready";
     this.lastStandingAt = settled ? sample.time : null;
     this.onsetAt = null;
+  }
+
+  observeDepth(rep, movement) {
+    if (movement.bend >= 24 && movement.drop >= 0.07) {
+      rep.depthReachedAt ??= movement.time;
+      if (movement.time - rep.depthReachedAt >= 55) rep.depthConfirmed = true;
+      if (!rep.bottom || movement.drop + 0.0015 * movement.bend >
+          rep.bottom.drop + 0.0015 * rep.bottom.bend + 0.004) {
+        rep.bottom = movement;
+        rep.lastAtBottom = movement;
+        rep.riseAt = null;
+        rep.risePeak = 0;
+      }
+    } else if (!rep.depthConfirmed) {
+      rep.depthReachedAt = null;
+    }
+    // A fast squat can spend one camera frame near maximum depth. Still require
+    // a separate, in-motion sample alongside a clearly deep, concordant pose.
+    if (!rep.depthConfirmed && rep.bottom?.bend >= 32 && rep.bottom.drop >= 0.11) {
+      rep.depthConfirmed = rep.samples.some(({ time, bend, drop }) =>
+        Math.abs(time - rep.bottom.time) >= 25 && Math.abs(time - rep.bottom.time) <= 250 &&
+        bend >= 10 && drop >= 0.023);
+    }
   }
 
   interruptFinish(rep, time, reset = false) {
@@ -582,6 +673,7 @@ export class SquatTracker {
       peakDown: Math.max(0, sample.speed),
       peakUp: 0,
       frames: {},
+      samples: [],
     };
     this.phase = "descending";
     this.attempt = rep;
@@ -601,7 +693,8 @@ export class SquatTracker {
     this.previous = null;
     this.lastValidTime = null;
     this.footShiftAt = null;
-    this.calibration = [];
+    this.turnAt = null;
+    this.clearCalibrationSamples();
     this.standingSamples = [];
     this.lockedStanding = null;
     this.lockedStandingAt = null;

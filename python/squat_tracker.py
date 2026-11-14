@@ -1,7 +1,10 @@
 """Side-view squat tracking from normalized MediaPipe pose landmarks."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 from math import atan2, degrees, exp, hypot, isfinite
+from statistics import median
 
 
 SIDES = {
@@ -10,10 +13,12 @@ SIDES = {
 }
 PHASE_ORDER = ("start", "descent", "bottom", "ascent", "finish")
 CALIBRATION_MS = 2000
+CALIBRATION_GAP_MS = 220
 STANDING_REFERENCE_MS = 450
 FINISH_HOLD_MS = 500
 FINISH_GRACE_MS = 250
 MAX_FRAME_GAP_MS = 300
+MAX_CAPTURE_GAP_MS = 400
 FOOT_SHIFT_MS = 150
 MAX_REP_MS = 20000
 
@@ -46,6 +51,9 @@ class Sample:
     toe_y: float | None = None
     time: float = 0
     speed: float = 0
+    raw: Sample | None = None
+    drop: float = 0
+    bend: float = 0
 
 
 @dataclass
@@ -105,6 +113,7 @@ class Rep:
     max_gap: float = 0
     peak_up: float = 0
     frames: dict = field(default_factory=dict)
+    samples: list = field(default_factory=list)
 
 
 def _clamp(value, low, high):
@@ -212,7 +221,10 @@ def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False
         if nose.y <= margin_y + torso * 0.16 or not all(in_frame(point) for point in (nose, *feet)):
             return Pose(reason="edges")
         if shoulder_span is not None and hip_span is not None:
-            side_on = (shoulder_span <= 0.35 and hip_span <= 0.26) or (narrow_hips and shoulder_span <= 0.60)
+            side_on = (
+                (shoulder_span <= 0.35 and hip_span <= 0.26) or (narrow_hips and shoulder_span <= 0.60)
+                or (shoulder_span <= 0.39 and hip_span <= 0.285 and knee_span is not None and knee_span <= 0.22)
+            )
         else:
             available_span = hip_span if hip_span is not None else shoulder_span
             side_on = available_span <= 0.20 if available_span is not None else abs(nose.x - shoulder.x) / leg_length >= 0.09
@@ -281,10 +293,36 @@ def _hip_drop_from(sample, reference, leg_length):
     return ((sample.hip_y - sample.ankle_y) - (reference.hip_y - reference.ankle_y)) / leg_length
 
 
-def _is_deeper(sample, previous, baseline):
-    hip_change = (sample.hip_y - previous.hip_y) / baseline.leg_length
-    knee_change = previous.knee_angle - sample.knee_angle
-    return hip_change > 0.007 or (hip_change >= -0.007 and knee_change > 2)
+def _motion_candidate(rep, sample, events):
+    rep.samples.append(sample)
+    events.append({
+        "type": "capture-candidate", "repId": rep.id, "timestampMs": sample.time,
+        "kneeAngleDeg": round(sample.knee_angle, 1),
+    })
+
+
+def _closest_middle(samples, from_time, to_time, depth, ascending=False):
+    best, error = None, float("inf")
+    for sample in samples:
+        progress = 1 - sample.drop / depth if ascending else sample.drop / depth
+        if not from_time <= sample.time < to_time or not 0.12 <= progress <= 0.92:
+            continue
+        distance = abs(sample.drop - depth * 0.5)
+        if distance + 1e-9 < error:
+            best, error = sample, distance
+    return best
+
+
+def _finalize_captures(rep, finish, events):
+    bottom = rep.bottom
+    descent = _closest_middle(rep.samples, rep.frames["start"]["timestampMs"], bottom.time, bottom.drop)
+    ascent = _closest_middle(rep.samples, bottom.time + 0.001, rep.first_standing.time, bottom.drop, ascending=True)
+    if descent:
+        _capture(rep, "descent", descent, events)
+    _capture(rep, "bottom", bottom, events)
+    if ascent:
+        _capture(rep, "ascent", ascent, events)
+    _capture(rep, "finish", finish, events)
 
 
 def _format_rep(rep, finish, baseline):
@@ -342,7 +380,7 @@ class SquatTracker:
 
     def reset(self):
         self.phase = "setup"
-        self.calibration = []
+        self._clear_calibration_samples()
         self.baseline = None
         self.previous = None
         self.last_time = None
@@ -354,6 +392,7 @@ class SquatTracker:
         self.attempt = None
         self.onset_at = None
         self.ankle_shift_at = None
+        self.turn_at = None
         self.next_rep_id = 1
 
     def update(self, landmarks, timestamp_ms, width, height, armed=True, lock_standing=None):
@@ -379,8 +418,10 @@ class SquatTracker:
             if self.attempt:
                 self._discard(events, "cancelled")
             self.onset_at = None
-        if self.baseline and self.last_valid_time is not None and timestamp_ms - self.last_valid_time > MAX_FRAME_GAP_MS:
-            self._lose_calibration(events, "tracking-gap")
+        if self.baseline and self.last_valid_time is not None:
+            max_gap = MAX_CAPTURE_GAP_MS if self.attempt and self.turn_at is None else MAX_FRAME_GAP_MS
+            if timestamp_ms - self.last_valid_time > max_gap:
+                self._lose_calibration(events, "tracking-gap")
         if self.attempt and timestamp_ms - self.attempt.start.time > MAX_REP_MS:
             self._lose_calibration(events, "timeout")
 
@@ -400,33 +441,43 @@ class SquatTracker:
                 self.ankle_shift_at = timestamp_ms
         else:
             self.ankle_shift_at = None
+        # A confirmed turn cannot use the extra recovery time for hidden landmarks.
+        if not tracking or checks["sideOn"]:
+            self.turn_at = None
+        elif pose.sample and self.turn_at is None:
+            self.turn_at = timestamp_ms
         sustained_foot_shift = self.ankle_shift_at is not None and timestamp_ms - self.ankle_shift_at >= FOOT_SHIFT_MS
         if not checks["sideOn"] or pose.shifted_foot:
-            return state(self._invalid_pose(pose, timestamp_ms, events, tracking, sustained_foot_shift))
+            message = self._invalid_pose(pose, timestamp_ms, events, tracking, sustained_foot_shift)
+            return state(message, progress=1 if self.baseline else self._calibration_progress())
 
-        sample = pose.sample
-        sample.time = timestamp_ms
+        raw = pose.sample
+        raw.time = timestamp_ms
+        sample = replace(raw, raw=raw)
         if self.attempt:
             self.attempt.max_gap = max(self.attempt.max_gap, timestamp_ms - self.last_valid_time)
         self.last_valid_time = timestamp_ms
+        previous = self.previous
         self._smooth(sample)
         self.previous = sample
         if not self.baseline:
-            checks["standing"] = sample.knee_angle >= 153
+            checks["standing"] = (
+                sample.knee_angle >= 145 and (sample.knee_y - sample.hip_y) / sample.leg_length >= 0.35
+                and (sample.torso_lean is None or sample.torso_lean <= 25)
+            )
             if checks["standing"]:
                 checks["steady"] = self._calibrate(sample)
             else:
-                self.calibration = []
-            first = self.calibration[0].time if self.calibration else timestamp_ms
-            progress = _clamp((timestamp_ms - first) / CALIBRATION_MS, 0, 1)
-            if progress < 1 or len(self.calibration) < 8:
+                self._interrupt_calibration(timestamp_ms)
+            progress = self._calibration_progress()
+            if not checks["steady"] or progress < 1 or len(self.calibration) < 8:
                 message = "Hold a comfortable standing position." if checks["standing"] else "Stand tall to calibrate."
                 return state(message, progress=progress)
             self.baseline = _make_baseline(self.calibration)
             self.standing_samples = [pose for pose in self.calibration if timestamp_ms - pose.time <= STANDING_REFERENCE_MS]
             if lock_standing:
                 self._lock_reference(timestamp_ms)
-            self.calibration = []
+            self._clear_calibration_samples()
             self.phase = "ready"
 
         baseline = self.baseline
@@ -445,7 +496,8 @@ class SquatTracker:
         if not armed and not settled:
             self.last_standing_at = None
         if armed:
-            self._track_rep(sample, start, knee_bend, hip_drop, returned_to_standing, settled, events)
+            movement = replace(raw, drop=_hip_drop_from(raw, start, baseline.leg_length), bend=start.knee_angle - raw.knee_angle)
+            self._track_rep(sample, movement, start, returned_to_standing, settled, previous.raw if previous else None, events)
 
         live = {
             "side": sample.side,
@@ -472,7 +524,8 @@ class SquatTracker:
     def _invalid_pose(self, pose, timestamp_ms, events, tracking, sustained_foot_shift):
         self.previous = None
         self.onset_at = None
-        self.calibration = []
+        if not self.baseline:
+            self._interrupt_calibration(timestamp_ms)
         if self.attempt:
             self.attempt.total_frames += 1
             self.attempt.max_gap = max(self.attempt.max_gap, timestamp_ms - self.last_valid_time)
@@ -506,25 +559,52 @@ class SquatTracker:
         if not previous or sample.side != previous.side or sample.time - previous.time > MAX_FRAME_GAP_MS:
             return
         interval = sample.time - previous.time
-        blend = 1 - exp(-interval / 48)
+        raw = sample.raw
+        leg_length = self.baseline.leg_length if self.baseline else raw.leg_length
+        raw_hip_rate = _hip_drop_from(raw, previous.raw, leg_length) * 1000 / interval
+        raw_knee_rate = (previous.raw.knee_angle - raw.knee_angle) * 1000 / interval
+        agrees = raw_hip_rate * raw_knee_rate > 0
+        motion = _clamp(min(abs(raw_hip_rate) / 0.48, abs(raw_knee_rate) / 90), 0, 1) if agrees else 0
+        blend = 1 - exp(-interval / (88 - 74 * motion))
         for key in ("hip_y", "knee_y", "knee_angle", "hip_angle", "torso_lean", "shin_lean"):
             value, old = getattr(sample, key), getattr(previous, key)
             if value is not None and old is not None:
                 setattr(sample, key, old + (value - old) * blend)
         if self.baseline:
             speed = (sample.hip_y - previous.hip_y) * 1000 / (interval * self.baseline.leg_length)
-            sample.speed = previous.speed + (_clamp(speed, -4, 4) - previous.speed) * blend
+            sample.speed = previous.speed + (_clamp(speed, -12, 12) - previous.speed) * blend
 
     def _calibrate(self, sample):
+        latest = self.calibration[-1] if self.calibration else None
+        if latest and (sample.side != latest.side or sample.time - latest.time > CALIBRATION_GAP_MS):
+            self._clear_calibration_samples()
         if self.calibration:
-            first, latest = self.calibration[0], self.calibration[-1]
-            if (sample.side != first.side or sample.time - latest.time > MAX_FRAME_GAP_MS
-                    or abs(sample.hip_y - first.hip_y) > first.leg_length * 0.035
-                    or abs(sample.ankle_x - first.ankle_x) > first.leg_length * 0.045
-                    or abs(sample.knee_angle - first.knee_angle) > 7):
-                self.calibration = []
+            recent = [pose for pose in self.calibration if sample.time - pose.time <= STANDING_REFERENCE_MS]
+            hip_height = sample.ankle_y - sample.hip_y
+            if (abs(hip_height - median(pose.ankle_y - pose.hip_y for pose in recent)) > sample.leg_length * 0.065
+                    or abs(sample.ankle_x - median(pose.ankle_x for pose in recent)) > sample.leg_length * 0.075
+                    or abs(sample.knee_angle - median(pose.knee_angle for pose in recent)) > 11):
+                self._interrupt_calibration(sample.time)
+                return False
+            if not self.calibration_interrupted:
+                self.calibration_observed_ms += sample.time - latest.time
+        self.calibration_interrupted = False
         self.calibration.append(sample)
         return len(self.calibration) > 1
+
+    def _calibration_progress(self):
+        return min(1, self.calibration_observed_ms / CALIBRATION_MS)
+
+    def _clear_calibration_samples(self):
+        self.calibration = []
+        self.calibration_observed_ms = 0
+        self.calibration_interrupted = False
+
+    def _interrupt_calibration(self, timestamp_ms):
+        if self.calibration and timestamp_ms - self.calibration[-1].time > CALIBRATION_GAP_MS:
+            self._clear_calibration_samples()
+        else:
+            self.calibration_interrupted = True
 
     def _remember_standing(self, sample, settled):
         self.standing_samples = [pose for pose in self.standing_samples if sample.time - pose.time <= STANDING_REFERENCE_MS]
@@ -535,15 +615,21 @@ class SquatTracker:
         self.locked_standing = _standing_reference(self.standing_samples)
         self.locked_standing_at = timestamp_ms
 
-    def _track_rep(self, sample, start, knee_bend, hip_drop, standing, settled, events):
+    def _track_rep(self, sample, movement, start, standing, settled, previous_raw, events):
+        knee_bend, hip_drop = movement.bend, movement.drop
         if not self.attempt:
-            if settled:
-                self.onset_at = None
-            elif self.last_standing_at is not None and knee_bend >= 9 and hip_drop >= 0.026:
+            if self.last_standing_at is not None and knee_bend >= 8 and hip_drop >= 0.022:
                 if self.onset_at is None:
                     self.onset_at = sample.time
-                if sample.time - self.onset_at >= 85:
+                decisive = (
+                    previous_raw and knee_bend >= 14 and hip_drop >= 0.045
+                    and previous_raw.knee_angle - movement.knee_angle >= 4
+                    and _hip_drop_from(movement, previous_raw, self.baseline.leg_length) >= 0.015
+                )
+                if decisive or sample.time - self.onset_at >= 35:
                     self._start_rep(sample, start, events)
+                    _motion_candidate(self.attempt, movement, events)
+                    self._observe_depth(self.attempt, movement)
             else:
                 self.onset_at = None
             return
@@ -551,69 +637,69 @@ class SquatTracker:
         rep = self.attempt
         rep.total_frames += 1
         rep.valid_frames += 1
+        if not rep.first_standing and (not standing or self.phase != "ascending"):
+            _motion_candidate(rep, movement, events)
         if self.phase in ("descending", "bottom"):
-            self._track_bottom(rep, sample, knee_bend, hip_drop, standing, settled, events)
+            rep.peak_down = max(rep.peak_down, sample.speed)
+            self._observe_depth(rep, movement)
+            if not rep.depth_confirmed and settled and sample.time - rep.onset_at > 250:
+                self._discard(events, "incomplete-descent")
+                return
+            if not rep.depth_confirmed or not rep.bottom:
+                return
+            rise_hip, rise_knee = rep.bottom.drop - hip_drop, rep.bottom.bend - knee_bend
+            if rise_hip <= 0.012 and abs(rise_knee) < 5:
+                rep.last_at_bottom = movement
+                if sample.time - rep.bottom.time >= 85 and abs(sample.speed) < 0.12:
+                    self.phase = "bottom"
+            if rise_hip >= 0.018 and rise_knee >= 6:
+                if rep.rise_at is None:
+                    rep.rise_at = sample.time
+                rep.rise_peak = max(rep.rise_peak, -sample.speed)
+                if (rise_hip >= 0.055 and rise_knee >= 12) or sample.time - rep.rise_at >= 35:
+                    self.phase = "ascending"
+                    rep.peak_up = rep.rise_peak
+            else:
+                rep.rise_at = None
+                rep.rise_peak = 0
         if self.phase != "ascending":
             return
 
         rep.peak_up = max(rep.peak_up, -sample.speed)
-        rise = rep.bottom.hip_y - sample.hip_y
-        if "ascent" not in rep.frames and rise >= (rep.bottom.hip_y - rep.start.hip_y) * 0.38:
-            _capture(rep, "ascent", sample, events)
-        if rise / self.baseline.leg_length < -0.045:
+        if rep.bottom.drop - hip_drop < -0.045:
             self._discard(events, "second-descent")
             return
         if not self._confirm_finish(rep, sample, knee_bend, hip_drop, standing):
             return
-        if rep.valid_frames / rep.total_frames < 0.9:
+        if rep.valid_frames / rep.total_frames < 0.85:
             self._discard(events, "low-confidence")
             return
-        if "ascent" not in rep.frames:
-            self._discard(events, "incomplete-ascent")
-            return
-        _capture(rep, "finish", sample, events)
+        _finalize_captures(rep, sample, events)
         events.append({"type": "rep-complete", "rep": _format_rep(rep, sample, self.baseline)})
         self.attempt = None
         self.phase = "ready"
         self.last_standing_at = sample.time if settled else None
         self.onset_at = None
 
-    def _track_bottom(self, rep, sample, knee_bend, hip_drop, standing, settled, events):
-        rep.peak_down = max(rep.peak_down, sample.speed)
-        if not rep.depth_confirmed and (knee_bend < 20 or hip_drop < 0.055):
+    def _observe_depth(self, rep, movement):
+        if movement.bend >= 24 and movement.drop >= 0.07:
+            if rep.depth_reached_at is None:
+                rep.depth_reached_at = movement.time
+            if movement.time - rep.depth_reached_at >= 55:
+                rep.depth_confirmed = True
+            if not rep.bottom or movement.drop + 0.0015 * movement.bend > rep.bottom.drop + 0.0015 * rep.bottom.bend + 0.004:
+                rep.bottom = rep.last_at_bottom = movement
+                rep.rise_at = None
+                rep.rise_peak = 0
+        elif not rep.depth_confirmed:
             rep.depth_reached_at = None
-        if knee_bend >= 24 and hip_drop >= 0.07 and rep.depth_reached_at is None:
-            rep.depth_reached_at = sample.time
-        if rep.depth_reached_at is not None and "descent" not in rep.frames:
-            _capture(rep, "descent", sample, events)
-        if rep.depth_reached_at is not None and sample.time - rep.depth_reached_at >= 145:
-            rep.depth_confirmed = True
-        # Keep depth candidates while the tracker confirms sustained movement.
-        if rep.depth_reached_at is not None and sample.time > rep.frames["descent"]["timestampMs"] and not standing:
-            if not rep.bottom or _is_deeper(sample, rep.bottom, self.baseline):
-                rep.bottom = sample
-                rep.last_at_bottom = sample
-                _capture(rep, "bottom", sample, events)
-        if not rep.depth_confirmed or not rep.bottom:
-            if settled and sample.time - rep.onset_at > 250:
-                self._discard(events, "incomplete-descent")
-            return
-        if self.phase == "descending" and (abs(sample.speed) < 0.09 or sample.speed < 0 or sample.time - rep.bottom.time > 100):
-            self.phase = "bottom"
-        rise_hip = (rep.bottom.hip_y - sample.hip_y) / self.baseline.leg_length
-        rise_knee = sample.knee_angle - rep.bottom.knee_angle
-        if rise_hip <= 0.012 and abs(rise_knee) < 5:
-            rep.last_at_bottom = sample
-        if rise_hip >= 0.018 and rise_knee >= 8:
-            if rep.rise_at is None:
-                rep.rise_at = sample.time
-            rep.rise_peak = max(rep.rise_peak, -sample.speed)
-            if sample.time - rep.rise_at >= 180:
-                self.phase = "ascending"
-                rep.peak_up = rep.rise_peak
-        else:
-            rep.rise_at = None
-            rep.rise_peak = 0
+        # A brief bottom can occupy one sample, but neighboring motion must agree.
+        if not rep.depth_confirmed and rep.bottom and rep.bottom.bend >= 32 and rep.bottom.drop >= 0.11:
+            rep.depth_confirmed = any(
+                25 <= abs(candidate.time - rep.bottom.time) <= 250
+                and candidate.bend >= 10 and candidate.drop >= 0.023
+                for candidate in rep.samples
+            )
 
     def _interrupt_finish(self, rep, timestamp_ms, reset=False):
         rep.last_finish_sample_at = None
@@ -662,9 +748,10 @@ class SquatTracker:
         self.baseline = None
         self.previous = None
         self.last_valid_time = None
-        self.calibration = []
+        self._clear_calibration_samples()
         self.standing_samples = []
         self.locked_standing = None
         self.locked_standing_at = None
         self.ankle_shift_at = None
+        self.turn_at = None
         self._discard(events, reason)

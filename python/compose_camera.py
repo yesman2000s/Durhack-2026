@@ -7,11 +7,13 @@ import base64
 from bisect import bisect_right
 from datetime import datetime, timezone
 import json
-from math import acos, cos, degrees, isfinite, radians, sin
+from math import acos, cos, degrees, hypot, isfinite, radians, sin
 from pathlib import Path
+from statistics import median
 import sys
 import textwrap
 import time
+from types import SimpleNamespace
 import uuid
 
 try:
@@ -31,6 +33,10 @@ WINDOW = "COMPOSE - Squat Camera"
 POSE_CROP_WIDTH_PER_HEIGHT = 0.95
 CENTERED_BODY_MARGIN = 0.175
 COUNTDOWN_MS = 3000
+POSE_INTERVAL_MS = 1000 / 12
+OVERLAY_LOSS_MS = 140
+MAX_CAPTURE_CANDIDATES = 330
+MAX_CANDIDATE_IMAGE_EDGE = 800
 MAX_MOTION_SAMPLES = 400
 MOTION_SAMPLE_INTERVAL_MS = 45
 MOTION_SAMPLE_GAP_MS = 200
@@ -47,7 +53,7 @@ PRACTICE_GUIDE = {
     ],
     "depthTarget": "comfortable personal reference",
     "torsoAngleTarget": None,
-    "proportionMethod": "Approximate ratios projected from standing, without absolute height or distance calibration.",
+    "proportionMethod": "Projected ratios from source image pixels, without absolute height or distance calibration.",
     "measurementLimits": "Estimates from one side in 2D. Do not infer side-to-side knee alignment, spinal loading, overall safety, or balance.",
 }
 SIDE_CONNECTIONS = {
@@ -145,7 +151,22 @@ def pose_joints(landmarks, side, indices=POSE_JOINTS):
     }
 
 
-def motion_sample(landmarks, live, timestamp_ms):
+def thigh_to_shin_ratio(joints, width, height):
+    leg = [joints.get(name) for name in ("hip", "knee", "ankle")]
+    if not all(point and (point["visibility"] is None or point["visibility"] >= 0.35) for point in leg):
+        return None
+    hip, knee, ankle = leg
+
+    def length(point):
+        return hypot((knee["x"] - point["x"]) * width, (knee["y"] - point["y"]) * height)
+
+    thigh, shin = length(hip), length(ankle)
+    if not isfinite(thigh) or not isfinite(shin) or height <= 0 or width <= 0 or min(thigh, shin) < height * 0.035:
+        return None
+    return round(thigh / shin, 3)
+
+
+def motion_sample(landmarks, live, timestamp_ms, width, height):
     if not live or not landmarks:
         return None
     joints = pose_joints(landmarks, live["side"], MOTION_JOINTS)
@@ -155,6 +176,7 @@ def motion_sample(landmarks, live, timestamp_ms):
         return None
     return {
         "timestampMs": timestamp_ms,
+        "thighToShinRatio": thigh_to_shin_ratio(joints, width, height),
         "joints": {
             name: {
                 "x": round(point["x"], 4), "y": round(point["y"], 4),
@@ -167,7 +189,10 @@ def motion_sample(landmarks, live, timestamp_ms):
 
 def make_motion_trace(samples, start_ms, movement_start_ms):
     frames = [
-        {"offsetMs": round(sample["timestampMs"] - start_ms), "joints": sample["joints"]}
+        {
+            "offsetMs": round(sample["timestampMs"] - start_ms), "joints": sample["joints"],
+            "thighToShinRatio": sample["thighToShinRatio"],
+        }
         for i, sample in enumerate(samples)
         if i == 0 or sample["timestampMs"] >= movement_start_ms - 400
     ]
@@ -206,15 +231,62 @@ def replay_joints_at(frames, offset_ms):
     }
 
 
-def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: dict | None) -> dict:
-    height, width = frame.shape[:2]
-    scale = min(1, 960 / max(width, height))
-    if scale < 1:
-        width, height = round(width * scale), round(height * scale)
-        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 84])
+class LiveOverlay:
+    """Render between accepted camera samples without changing tracker input."""
+
+    def __init__(self):
+        self.origin = None
+        self.target = None
+        self.target_at = None
+        self.side = None
+        self.duration = 0
+
+    def update(self, landmarks, side, timestamp_ms):
+        if not landmarks or side is None:
+            return
+        points = tuple(
+            SimpleNamespace(x=point.x, y=point.y, visibility=point.visibility)
+            for point in landmarks
+        )
+        rendered, previous_side = self.at(timestamp_ms)
+        self.origin = rendered if previous_side == side else None
+        self.target, self.target_at, self.side = points, timestamp_ms, side
+        if self.origin:
+            offset = int(side == "right")
+            motion = max(hypot(self.origin[index + offset].x - points[index + offset].x,
+                               self.origin[index + offset].y - points[index + offset].y) for index in (23, 25, 27))
+            self.duration = max(44, 90 - motion * 620)
+
+    def at(self, timestamp_ms):
+        if self.target_at is None or timestamp_ms - self.target_at > OVERLAY_LOSS_MS:
+            return None, None
+        if not self.origin or timestamp_ms >= self.target_at + self.duration:
+            return self.target, self.side
+        alpha = max(0, timestamp_ms - self.target_at) / self.duration
+        alpha = alpha * (2 - alpha)
+        points = tuple(
+            SimpleNamespace(x=before.x + (after.x - before.x) * alpha,
+                            y=before.y + (after.y - before.y) * alpha,
+                            visibility=after.visibility)
+            for before, after in zip(self.origin, self.target)
+        )
+        return points, self.side
+
+
+def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: dict | None,
+                     max_edge=960) -> dict | None:
+    source_height, source_width = frame.shape[:2]
+    height, width = source_height, source_width
+    scale = min(1, max_edge / max(width, height))
+    try:
+        if scale < 1:
+            width, height = max(1, round(width * scale)), max(1, round(height * scale))
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 84])
+    except cv2.error:
+        return None
     if not ok:
-        raise RuntimeError("Could not encode a squat snapshot.")
+        return None
     snapshot = {
         "timestampMs": timestamp_ms,
         "width": width,
@@ -224,6 +296,7 @@ def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: di
         "kneeAngleDeg": live["kneeAngleDeg"] if live else None,
     }
     if live and landmarks:
+        joints = pose_joints(landmarks, live["side"])
         snapshot["pose"] = {
             "side": live["side"],
             "hipAngleDeg": live["hipAngleDeg"],
@@ -232,7 +305,8 @@ def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: di
             "hipDropLegLengths": live["hipDropRatio"],
             "hipToKneeLegLengths": live["hipToKneeRatio"],
             "hipSpeedLegLengthsPerSec": live["hipSpeedLegLengthsPerSec"],
-            "joints": pose_joints(landmarks, live["side"]),
+            "thighToShinRatio": thigh_to_shin_ratio(joints, source_width, source_height),
+            "joints": joints,
         }
     return snapshot
 
@@ -242,6 +316,10 @@ def make_evidence(rep: dict, frames: dict, camera: dict, reference: dict, captur
     metrics = dict(rep["metrics"])
     metrics["kneeExcursionDeg"] = metrics["startKneeAngleDeg"] - metrics["kneeAngleAtBottomDeg"]
     metrics["returnAngleErrorDeg"] = abs(metrics["startKneeAngleDeg"] - metrics["finishKneeAngleDeg"])
+    ratios = [sample["thighToShinRatio"] for sample in motion_samples
+              if rep["startedAtMs"] <= sample["timestampMs"] <= rep["returnedAtMs"]
+              and sample["thighToShinRatio"] is not None]
+    metrics["thighToShinRatio"] = round(median(ratios), 3) if ratios else metrics.get("standingThighToShinRatio")
     snapshots = []
     for phase in PHASES:
         if phase in frames:
@@ -286,6 +364,7 @@ class CaptureSession:
         self.show_guide = False
         self.guide_depth = 1
         self.snapshots = {}
+        self.capture_candidates = {}
         self.motion_samples = []
         self.replay_open = False
         self.replay_offset = 0
@@ -297,6 +376,7 @@ class CaptureSession:
         self.countdown_started_at = None
         self.active_since = None
         self.capture_timestamp = None
+        self.rep_started = False
         self.state = {"phase": "setup", "setup": {"ready": False, "checks": {}}, "live": None}
         self.notice = ""
 
@@ -313,6 +393,7 @@ class CaptureSession:
         self.go_at = None
         self.active_since = None
         self.clear_countdown()
+        self.rep_started = False
         self.close_replay()
 
     def clear_countdown(self):
@@ -320,14 +401,15 @@ class CaptureSession:
         self.countdown_started_at = None
         self.capture_timestamp = None
         self.snapshots.clear()
+        self.capture_candidates.clear()
         self.motion_samples = []
 
-    def keep_motion_sample(self, landmarks, live, timestamp_ms, force=False):
+    def keep_motion_sample(self, landmarks, live, timestamp_ms, width, height, force=False):
         if self.motion_samples:
             elapsed = timestamp_ms - self.motion_samples[-1]["timestampMs"]
             if elapsed <= 0 or (not force and elapsed < MOTION_SAMPLE_INTERVAL_MS):
                 return
-        sample = motion_sample(landmarks, live, timestamp_ms)
+        sample = motion_sample(landmarks, live, timestamp_ms, width, height)
         if sample is None:
             return
         if len(self.motion_samples) >= MAX_MOTION_SAMPLES:
@@ -367,12 +449,17 @@ class CaptureSession:
         self.replay_clock = timestamp_ms
 
     def begin_capture(self, timestamp_ms: int, early=False):
-        self.wait_until = None
         self.countdown_until = None
         self.armed_at = self.countdown_started_at
         self.active_since = timestamp_ms
         if not early:
             self.go_at = timestamp_ms
+
+    def return_to_positioning(self):
+        self.armed_at = None
+        self.active_since = None
+        self.go_at = None
+        self.clear_countdown()
 
     @property
     def armed(self):
@@ -430,8 +517,8 @@ class CaptureSession:
 
         if tracking_motion:
             finished = any(event["type"] == "rep-complete" for event in self.state["events"])
-            self.keep_motion_sample(landmarks, live, timestamp_ms, force=finished)
-        if self.wait_until is not None:
+            self.keep_motion_sample(landmarks, live, timestamp_ms, width, height, force=finished)
+        if not self.armed and self.wait_until is not None:
             movement_started = standby and (
                 self.state["phase"] in ("descending", "bottom", "ascending")
                 or any(event["type"] == "capture" for event in self.state["events"])
@@ -452,12 +539,18 @@ class CaptureSession:
                 self.countdown_started_at = timestamp_ms
                 self.countdown_until = timestamp_ms + COUNTDOWN_MS
                 self.capture_timestamp = now_iso()
-                self.snapshots["start"] = capture_snapshot(frame, timestamp_ms, landmarks, live)
-                self.keep_motion_sample(landmarks, live, timestamp_ms)
+                start_image = capture_snapshot(frame, timestamp_ms, landmarks, live)
+                if start_image is not None:
+                    self.snapshots["start"] = start_image
+                self.keep_motion_sample(landmarks, live, timestamp_ms, width, height)
             if not movement_started or not self.armed:
                 return
 
         if not self.armed:
+            return
+        if not self.rep_started and self.state["phase"] == "setup":
+            self.return_to_positioning()
+            self.notice = "Stand side-on again. The countdown will restart when you're ready."
             return
         if timestamp_ms - self.active_since > 20000:
             self.cancel()
@@ -470,10 +563,25 @@ class CaptureSession:
             return
 
         for event in self.state["events"]:
-            if event["type"] == "capture":
+            if event["type"] == "capture-candidate":
+                candidate = capture_snapshot(
+                    frame, event["timestampMs"], landmarks, live, max_edge=MAX_CANDIDATE_IMAGE_EDGE,
+                )
+                if candidate is not None:
+                    candidate["kneeAngleDeg"] = event["kneeAngleDeg"]
+                    if len(self.capture_candidates) >= MAX_CAPTURE_CANDIDATES:
+                        del self.capture_candidates[next(iter(self.capture_candidates))]
+                    self.capture_candidates[event["timestampMs"]] = candidate
+            elif event["type"] == "capture":
                 phase = event["phase"]
+                if phase == "start":
+                    self.rep_started = True
                 if phase != "start" or "start" not in self.snapshots:
-                    self.snapshots[phase] = capture_snapshot(frame, timestamp_ms, landmarks, live)
+                    image = self.capture_candidates.get(event["timestampMs"])
+                    if image is None and event["timestampMs"] == timestamp_ms:
+                        image = capture_snapshot(frame, timestamp_ms, landmarks, live)
+                    if image is not None:
+                        self.snapshots[phase] = image
             elif event["type"] == "rep-discarded":
                 self.cancel()
                 self.notice = DISCARD_MESSAGES.get(event["reason"], "The full rep could not be tracked. Check your framing and try again.")
@@ -506,7 +614,10 @@ class CaptureSession:
                     image = cv2.imdecode(jpeg, cv2.IMREAD_COLOR)
                     if image is not None:
                         self.thumbnails.append((snapshot["phase"], image))
-                self.notice = "Rep captured. Press P to play or E to save."
+                if len(self.latest["snapshots"]) < len(PHASES):
+                    self.notice = "Rep captured. Some images are missing. Press P to play or E to save."
+                else:
+                    self.notice = "Rep captured. Press P to play or E to save."
                 self.cancel()
                 break
 
@@ -635,14 +746,15 @@ def draw_replay(display, preview_width, preview_height, session, timestamp_ms):
     draw_text(panel, f"{action}   |   X  Close   |   {elapsed / 1000:.1f} / {length / 1000:.1f}s", 17, preview_height - 17, 0.49, INK)
 
 
-def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestamp_ms: int) -> np.ndarray:
+def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestamp_ms: int, overlay_side=None) -> np.ndarray:
     height, width = frame.shape[:2]
     crop_left, crop_width = center_crop_bounds(width, height)
     preview_scale = min(720 / crop_width, 555 / height)
     preview = cv2.resize(frame[:, crop_left:crop_left + crop_width], (round(crop_width * preview_scale), round(height * preview_scale)))
     live = session.state["live"]
     tracking_motion = session.armed or session.countdown_until is not None
-    draw_pose(preview, landmarks, live["side"] if live else None, tracking_motion, crop_left / width, crop_width / width)
+    side = overlay_side if overlay_side is not None else live["side"] if live else None
+    draw_pose(preview, landmarks, side, tracking_motion, crop_left / width, crop_width / width)
     preview_height, preview_width = preview.shape[:2]
     display = np.full((650, preview_width + 390, 3), BG, dtype=np.uint8)
     display[:preview_height, :preview_width] = preview
@@ -726,7 +838,10 @@ def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestam
         up = metrics["averageAscentLegLengthsPerSec"]
         draw_text(display, f"Hip speed: {down:.2f} down / {up:.2f} up (leg lengths/s)", panel_x, y + 22, 0.43)
         draw_text(display, f"Bottom knee angle: {metrics['kneeAngleAtBottomDeg']:.0f} degrees", panel_x, y + 44, 0.43)
-        y = draw_paragraph(display, session.latest["cue"]["text"], panel_x, y + 68, INK)
+        ratio = metrics.get("thighToShinRatio")
+        ratio_text = f"{ratio:.2f}:1" if ratio is not None else "Unavailable"
+        draw_text(display, f"Thigh / shin: {ratio_text} (projected)", panel_x, y + 66, 0.43)
+        y = draw_paragraph(display, session.latest["cue"]["text"], panel_x, y + 90, INK)
     if session.notice:
         draw_paragraph(display, session.notice, panel_x, min(max(y + 6, 338), 500), MUTED)
 
@@ -752,6 +867,7 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
             raise RuntimeError(f"Could not open camera {index}. Close other camera apps or choose another index with --camera.")
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        camera.set(cv2.CAP_PROP_FPS, 30)
 
         options = mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(MODEL_PATH)),
@@ -762,10 +878,10 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
         session = CaptureSession(output, variant)
         opened_at = time.monotonic()
         session.start(0)
-        last_sample = -1000
+        next_sample_at = 0
         last_frame = opened_at
         preview_frame = None
-        landmarks = None
+        overlay = LiveOverlay()
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW, 1000, 600)
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
@@ -782,17 +898,19 @@ def run_camera(index: int, output: Path, quiet: bool, variant="bodyweight"):
                     if cv2.waitKey(20) & 0xFF in (27, ord("q")):
                         break
                     continue
-                if timestamp_ms - last_sample >= 65:
-                    if ok:
-                        landmarks = detect_centered_pose(detector, frame, timestamp_ms)
-                    else:
-                        landmarks = None
+                if timestamp_ms + 2 >= next_sample_at:
+                    landmarks = detect_centered_pose(detector, frame, timestamp_ms) if ok else None
                     session.update(preview_frame, landmarks, timestamp_ms)
+                    live = session.state["live"]
+                    overlay.update(landmarks, live["side"] if live else None, timestamp_ms)
                     if session.go_at == timestamp_ms and not quiet:
                         play_go_sound()
-                    last_sample = timestamp_ms
+                    elapsed_intervals = max(1, int((timestamp_ms + 2 - next_sample_at) / POSE_INTERVAL_MS) + 1)
+                    next_sample_at += elapsed_intervals * POSE_INTERVAL_MS
 
-                cv2.imshow(WINDOW, make_preview(preview_frame, landmarks, session, timestamp_ms))
+                preview_time = round((time.monotonic() - opened_at) * 1000)
+                render_points, render_side = overlay.at(preview_time)
+                cv2.imshow(WINDOW, make_preview(preview_frame, render_points, session, preview_time, render_side))
                 key = cv2.waitKey(1 if ok else 20) & 0xFF
                 if key in (27, ord("q")):
                     break

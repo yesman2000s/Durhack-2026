@@ -1,3 +1,5 @@
+import { measureThighToShin, summarizeThighToShin } from './leg-proportions.js';
+
 export const PHASE_LABELS = {
   start: 'Standing', descent: 'Lowering', bottom: 'Bottom', ascent: 'Rising', finish: 'Standing again',
 };
@@ -28,15 +30,17 @@ export function framePose(frame, live) {
     hipDropLegLengths: live.hipDropRatio,
     hipToKneeLegLengths: live.hipToKneeRatio,
     hipSpeedLegLengthsPerSec: live.hipSpeedLegLengthsPerSec,
+    thighToShinRatio: measureThighToShin(frame, live.side),
     joints,
   };
 }
 
-export function captureImage(source, width, height) {
+export function captureImage(source, width, height, canvas = document.createElement('canvas')) {
   const scale = Math.min(1, 960 / Math.max(width, height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
+  const captureWidth = Math.max(1, Math.round(width * scale));
+  const captureHeight = Math.max(1, Math.round(height * scale));
+  if (canvas.width !== captureWidth) canvas.width = captureWidth;
+  if (canvas.height !== captureHeight) canvas.height = captureHeight;
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return null;
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
@@ -46,10 +50,13 @@ export function captureImage(source, width, height) {
 }
 
 export function makeEvidence({ rep, images, motionTrace, captureStartMs, source, camera, capturedAt, reference, variant = 'bodyweight' }) {
+  const movementStartOffsetMs = Math.round(rep.startedAtMs - captureStartMs);
+  const returnOffsetMs = Math.round(rep.returnedAtMs - captureStartMs);
   const metrics = {
     ...rep.metrics,
     kneeExcursionDeg: rep.metrics.startKneeAngleDeg - rep.metrics.kneeAngleAtBottomDeg,
     returnAngleErrorDeg: Math.abs(rep.metrics.startKneeAngleDeg - rep.metrics.finishKneeAngleDeg),
+    thighToShinRatio: summarizeThighToShin(motionTrace?.frames ?? [], movementStartOffsetMs, returnOffsetMs, rep.metrics.standingThighToShinRatio),
   };
   const snapshots = Object.keys(PHASE_LABELS).flatMap((phase) => {
     const frame = images.get(phase);
@@ -61,7 +68,7 @@ export function makeEvidence({ rep, images, motionTrace, captureStartMs, source,
     id: globalThis.crypto.randomUUID(),
     exercise: 'squat', variant, captureMode: 'single-rep',
     source, capturedAt, camera, trackingSide: rep.side,
-    movementStartOffsetMs: Math.round(rep.startedAtMs - captureStartMs),
+    movementStartOffsetMs,
     reference: reference ?? null,
     metrics,
     cue: reference?.establishedByThisRep
@@ -71,7 +78,7 @@ export function makeEvidence({ rep, images, motionTrace, captureStartMs, source,
     practiceGuide: {
       descentTargetMs: 2000, ascentTargetMs: 1000, guidance: FORM_GUIDE,
       depthTarget: 'comfortable personal reference', torsoAngleTarget: null,
-      proportionMethod: 'Approximate ratios projected from standing, without absolute height or distance calibration.',
+      proportionMethod: 'Projected ratios from source image pixels, without absolute height or distance calibration.',
       measurementLimits: 'Estimates from one side in 2D. Do not infer side-to-side knee alignment, spinal loading, overall safety, or balance.',
     },
     snapshots,

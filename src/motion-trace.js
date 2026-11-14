@@ -1,3 +1,5 @@
+import { measureThighToShin } from './leg-proportions.js';
+
 const RECORD_INTERVAL_MS = 45;
 const MAX_TRACE_FRAMES = 400;
 const LEAD_IN_MS = 400;
@@ -29,14 +31,14 @@ export function recordPose(trace, frame, live, force = false) {
   if (live.torsoLeanDeg === null) delete joints.shoulder;
   // The countdown sample anchors the export. The rest is bounded by the rep timeout.
   if (trace.length >= MAX_TRACE_FRAMES) trace.splice(1, 1);
-  trace.push({ timestampMs: frame.timestampMs, joints });
+  trace.push({ timestampMs: frame.timestampMs, joints, thighToShinRatio: measureThighToShin(frame, live.side) });
 }
 
 export function makeMotionTrace(trace, captureStartMs, movementStartMs) {
   if (trace.length < 2) return undefined;
   return {
     frames: trace.filter((frame, index) => index === 0 || frame.timestampMs >= movementStartMs - LEAD_IN_MS)
-      .map(({ timestampMs, joints }) => ({ offsetMs: Math.round(timestampMs - captureStartMs), joints })),
+      .map(({ timestampMs, ...sample }) => ({ ...sample, offsetMs: Math.round(timestampMs - captureStartMs) })),
   };
 }
 

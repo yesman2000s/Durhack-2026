@@ -22,10 +22,19 @@ function mirrorSide(landmarks) {
   return mirrored;
 }
 
+function rapidMotion(downMs, upMs, amplitude = 1) {
+  return (_depth, time) => {
+    const elapsed = time - 3000;
+    if (elapsed <= 0 || elapsed >= downMs + upMs) return demoLandmarks(0);
+    const depth = elapsed < downMs ? smooth(elapsed / downMs) : 1 - smooth((elapsed - downMs) / upMs);
+    return demoLandmarks(depth * amplitude);
+  };
+}
+
 const fixtures = [
   { name: "left profile", expectedSide: "left" },
   { name: "brief loss", loss: [3440, 3560], expectedSide: "left" },
-  { name: "long loss", loss: [3440, 3840], expectedDiscard: "tracking-gap" },
+  { name: "long loss", loss: [3440, 3920], expectedDiscard: "tracking-gap" },
   { name: "right profile", mirror: true, expectedSide: "right" },
   {
     name: "slightly oblique profile",
@@ -111,13 +120,77 @@ const fixtures = [
       if (time >= 3920 && depth > 0.97) points[11].visibility = 0.18;
     },
   },
+  {
+    name: "fast lowering at 12 Hz",
+    interval: 1000 / 12,
+    armedAt: 2500,
+    points: rapidMotion(250, 1200),
+    expectedSide: "left",
+  },
+  {
+    name: "fast rise at 12 Hz",
+    interval: 1000 / 12,
+    armedAt: 2500,
+    points: rapidMotion(1100, 250),
+    expectedSide: "left",
+  },
+  {
+    name: "fast reversal with irregular frames",
+    interval: [72, 96, 83, 105, 61],
+    armedAt: 2500,
+    points: rapidMotion(300, 260),
+    expectedSide: "left",
+  },
+  {
+    name: "single deep pose glitch at 12 Hz",
+    interval: 1000 / 12,
+    armedAt: 2500,
+    points: (_depth, time) => demoLandmarks(time === 3250 ? 1 : 0),
+    expectedSide: undefined,
+    allowDiscard: true,
+  },
+  {
+    name: "soft-kneed side setup with sway and isolated missing frames",
+    interval: 80,
+    until: 7800,
+    armedAt: 2800,
+    misses: [640, 1440],
+    expectedSide: "left",
+    points(_depth, time) {
+      const landmarks = demoLandmarks(0.30 + 0.70 * frameDepth(time - 2800));
+      for (const [near, span] of [[11, 0.36], [23, 0.27], [25, 0.16]]) {
+        landmarks[near + 1].x = landmarks[near].x - span * 193 / 960;
+      }
+      return landmarks.map((joint) => ({
+        ...joint,
+        x: joint.x + 0.004 * Math.sin(time / 330),
+        y: joint.y + 0.008 * Math.sin(time / 240),
+      }));
+    },
+  },
+  {
+    name: "several brief pose interruptions during a rep",
+    interval: 80,
+    until: 7400,
+    misses: [3440, 3920, 4240, 4800, 5280],
+    points: (depth) => demoLandmarks(0.08 + 0.92 * depth),
+    expectedSide: "left",
+  },
+  {
+    name: "320 ms interruption during a rep",
+    interval: 80,
+    loss: [3440, 3680],
+    expectedSide: "left",
+  },
 ];
-const cases = fixtures.map(({ name, loss, mirror, interval = 40, until = 6500, armedAt = 0, points = demoLandmarks, adjust, expectedSide, expectedDiscard }) => {
+const cases = fixtures.map(({ name, loss, misses = [], mirror, interval = 40, until = 6500, armedAt = 0, points = demoLandmarks, adjust, expectedSide, expectedDiscard, allowDiscard }) => {
   const frames = [];
   const tracker = new SquatTracker();
   const expected = [];
-  for (let timestampMs = 0; timestampMs < until; timestampMs += interval) {
-    const missing = loss && timestampMs >= loss[0] && timestampMs < loss[1];
+  const intervals = Array.isArray(interval) ? interval : [interval];
+  for (let time = 0, index = 0; time < until; time += intervals[index++ % intervals.length]) {
+    const timestampMs = Math.round(time);
+    const missing = misses.includes(timestampMs) || (loss && timestampMs >= loss[0] && timestampMs < loss[1]);
     const depth = frameDepth(timestampMs - 2240);
     let landmarks = missing ? null : points(depth, timestampMs);
     if (landmarks && adjust) adjust(landmarks, depth, timestampMs);
@@ -128,7 +201,7 @@ const cases = fixtures.map(({ name, loss, mirror, interval = 40, until = 6500, a
   }
   const events = expected.flatMap((state) => state.events);
   assert.equal(events.find(({ type }) => type === "rep-complete")?.rep.side, expectedSide, name);
-  assert.equal(events.find(({ type }) => type === "rep-discarded")?.reason, expectedDiscard, name);
+  if (!allowDiscard) assert.equal(events.find(({ type }) => type === "rep-discarded")?.reason, expectedDiscard, name);
   return { name, frames, expected };
 });
 

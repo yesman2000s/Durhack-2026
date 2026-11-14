@@ -708,6 +708,22 @@ button:enabled { cursor: pointer; }
   margin-block: 24px 18px;
 }
 
+.leg-ratio {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-block: 18px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-soft);
+  font-size: .95rem;
+}
+
+.leg-ratio strong { font-weight: 650; font-variant-numeric: tabular-nums; }
+.leg-ratio span { color: var(--muted); }
+
 .skeleton-playback h3 {
   font-size: 1.125rem;
   line-height: 1.35;

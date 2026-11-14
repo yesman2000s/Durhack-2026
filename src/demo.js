@@ -1,3 +1,5 @@
+import { nextPoseSampleTime } from './pose-cadence.js';
+
 // Generated joints exercise the same capture pipeline as a webcam, with no video file.
 const WIDTH = 960, HEIGHT = 540;
 const rads = (deg) => deg * Math.PI / 180;
@@ -56,16 +58,18 @@ function paintDemo(canvas, points) {
 export function createDemo(canvas, onFrame) {
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
-  let motionTime = null, lastSample = -Infinity, frame;
+  let motionTime = null, nextSampleAt, frame;
   function tick(now) {
-    if (now - lastSample >= 55) {
-      lastSample = now;
-      const t = motionTime === null ? 0 : now - motionTime;
-      const depth = t < 430 ? 0 : t < 2830 ? smooth((t - 430) / 2400)
-        : t < 3130 ? 1 : t < 4530 ? 1 - smooth((t - 3130) / 1400) : 0;
-      if (t > 5650) motionTime = null;
-      const landmarks = demoLandmarks(depth);
-      paintDemo(canvas, landmarks);
+    const t = motionTime === null ? 0 : now - motionTime;
+    const depth = t < 430 ? 0 : t < 2830 ? smooth((t - 430) / 2400)
+      : t < 3130 ? 1 : t < 4530 ? 1 - smooth((t - 3130) / 1400) : 0;
+    if (t > 5650) motionTime = null;
+    const landmarks = demoLandmarks(depth);
+    paintDemo(canvas, landmarks);
+
+    nextSampleAt ??= now;
+    if (now + 4 >= nextSampleAt) {
+      nextSampleAt = nextPoseSampleTime(nextSampleAt, now);
       onFrame({ landmarks, width: WIDTH, height: HEIGHT, timestampMs: now, video: canvas });
     }
     frame = requestAnimationFrame(tick);

@@ -28,7 +28,7 @@ The preview opens and arms the first rep automatically. Use **Space** to arm ano
 ## Capture a rep
 
 1. Set the laptop on a stable surface and face left or right. The preview trims the sides of wide camera frames. Stand in the middle with your head and both feet visible, with enough room to squat. In the browser, select **Barbell** before starting the camera if you're using one.
-2. Stand still for about two seconds. The app saves your standing stance, then shows a three-second countdown and **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
+2. Hold a comfortable standing position for about two seconds. Your knees can stay slightly bent. The app saves your stance, then shows a three-second countdown and **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
 3. Lower through a comfortable range, stand back up, and hold briefly. The tracker uses your saved stance to recognize the finish and can tolerate small shifts and brief tracking gaps. If it loses sight of you for longer or can't see a complete cycle, it asks you to try again.
 4. Review the five snapshots. Use **Play skeleton** and the time slider in the browser, or **P** in Python, to replay the tracked movement. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Until export, the latest rep is held in memory.
 
@@ -40,7 +40,11 @@ Both versions use version 1 of the same JSON format, with the camera dimensions,
 
 The export labels the squat type as `bodyweight` or `barbell`. `motionTrace.frames` contains timestamped, normalized joints from the tracked side, with offsets relative to the same standing frame. Playback shows the pose trace without a video recording. Brief gaps can interpolate between nearby observations. Longer gaps appear blank.
 
-The metrics include lowering and rising time, pause, mean and peak projected vertical hip speed, knee bend and return angle, bottom hip, torso and shin angles, estimated standing proportions, and tracking quality. Speed is scaled to the projected standing leg length, so it is in leg lengths per second. The deepest image is the best observed loaded pose from the sampled frames; it may differ from the exact instant of maximum depth. Missing or low-quality poses are excluded. View angle, clothing, lighting and camera position can all affect these estimates. A side view cannot assess side-to-side knee alignment, spinal loading, or overall safety.
+**Thigh to shin** divides the visible hip-to-knee length by the knee-to-ankle length for the same leg. Snapshot poses and motion trace frames report the ratio for that image. The rep summary uses the median of usable measurements from the start of movement to the return to standing, with the standing ratio as a fallback. These are lengths projected onto the camera image. A more angled view can change the estimate.
+
+The camera targets 12 pose measurements per second. The live skeleton eases between those measurements while the tracker and evidence use observed frames. The lowering and rising snapshots use the closest available frames to halfway through the hip travel in each phase. The bottom image is the deepest observed pose, based on the hip drop and knee bend together. A fast movement can pass between samples. If the camera misses a phase, its photo is omitted.
+
+The metrics include lowering and rising time, pause, mean and peak projected vertical hip speed, knee bend and return angle, bottom hip, torso and shin angles, estimated standing proportions, and tracking quality. Speed is scaled to the projected standing leg length, so it is in leg lengths per second. Missing or low-quality poses are excluded. View angle, clothing, lighting and camera position can all affect these estimates. A side view cannot assess side-to-side knee alignment, spinal loading, or overall safety.
 
 The JPEGs may identify the person in the recording. The app does not upload them; if you share an export later, it contains the images as well as the measurements.
 

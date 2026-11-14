@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SquatTracker } from './squat-tracker.js';
-import { createDemo, drawPose } from './demo.js';
+import { createDemo } from './demo.js';
 import { poseInCenter } from './camera-crop.js';
+import { createPosePreview } from './pose-preview.js';
 import { makeMotionTrace, recordPose } from './motion-trace.js';
 import { SkeletonPlayback } from './skeleton-playback.jsx';
 import { captureImage, downloadEvidence, FORM_GUIDE, framePose, makeEvidence, PHASE_LABELS } from './evidence.js';
@@ -12,7 +13,7 @@ const DEFAULT_SETUP = { ready: false, checks: {}, message: 'Start the camera to 
 const CHECKS = [
   ['inFrame', 'Fit your whole body', 'Keep your head and feet in view.'],
   ['sideOn', 'Turn to the side', 'Face left or right.'],
-  ['steady', 'Stand tall and still', 'Wait for the countdown and Go signal.'],
+  ['steady', 'Stand comfortably', 'Keep your feet planted and wait for Go.'],
 ];
 const PHASE = { setup: 'Positioning', ready: 'Ready', descending: 'Lowering', bottom: 'Bottom', ascending: 'Rising' };
 const COUNTDOWN_SECONDS = 3;
@@ -28,6 +29,7 @@ const DISCARD_MESSAGES = {
 const s = (ms) => `${(ms / 1000).toFixed(2)} s`;
 const deg = (n) => `${Math.round(n)}°`;
 const velocity = (n) => `${n.toFixed(2)}`;
+const ratio = (n) => `${n.toFixed(2)} : 1`;
 const shown = (format, value) => Number.isFinite(value) ? format(value) : '—';
 
 function CameraIcon({ size = 25 }) {
@@ -133,7 +135,7 @@ function RepResult({ result, onClear, titleRef }) {
         </div>}
         {expanded && selectedSnapshot && <figure className="selected-snapshot">
           <img src={selectedSnapshot.url} alt={`Side view · ${PHASE_LABELS[selectedSnapshot.phase]}`} />
-          <figcaption>{PHASE_LABELS[selectedSnapshot.phase]}<span>{s(selectedSnapshot.offsetMs)} from capture start</span></figcaption>
+          <figcaption>{PHASE_LABELS[selectedSnapshot.phase]}<span>{s(selectedSnapshot.offsetMs)} from capture start{Number.isFinite(selectedSnapshot.pose?.thighToShinRatio) && ` · Thigh to shin ${ratio(selectedSnapshot.pose.thighToShinRatio)}`}</span></figcaption>
         </figure>}
         {result.snapshots.length < 5 && <p className="snapshot-note">Some snapshots were unavailable. The export includes the images that were captured.</p>}
       </div>
@@ -141,6 +143,10 @@ function RepResult({ result, onClear, titleRef }) {
         {mainValues.map(renderMetric)}
       </dl>
     </div>
+    {Number.isFinite(m.thighToShinRatio) && <p className="leg-ratio">
+      <strong>Thigh to shin</strong><strong>{ratio(m.thighToShinRatio)}</strong>
+      <span>Hip to knee ÷ knee to ankle, estimated from the side view.</span>
+    </p>}
     {result.motionTrace?.frames.length > 1 && <SkeletonPlayback
       motionTrace={result.motionTrace} camera={result.camera} movementStartOffsetMs={result.movementStartOffsetMs}
     />}
@@ -167,6 +173,8 @@ function App() {
   const cameraVideo = useRef(null);
   const demoVideo = useRef(null);
   const overlay = useRef(null);
+  const posePreview = useRef(null);
+  const snapshotCanvas = useRef(null);
   const guide = useRef(null);
   const reviewTitle = useRef(null);
   const [mode, setMode] = useState('off');
@@ -227,6 +235,7 @@ function App() {
     clearAttempt();
     clearReference();
     tracker.current.reset();
+    posePreview.current?.clear();
     setView({ phase: 'setup', setup: DEFAULT_SETUP, live: null });
   }
 
@@ -237,8 +246,6 @@ function App() {
     resetSetup();
     setMode('off');
     setNotice(message || '');
-    const canvas = overlay.current;
-    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
   }
 
   useEffect(() => {
@@ -248,16 +255,18 @@ function App() {
     document.addEventListener('visibilitychange', visibility);
     return () => {
       recorder.current?.handle?.stop();
+      posePreview.current?.clear();
       audio.current?.close().catch(() => {});
       window.removeEventListener('pagehide', pagehide);
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
 
-  function safeCapture(frame, state) {
+  function safeCapture(frame, state, kneeAngleDeg = state.live?.kneeAngleDeg ?? null) {
     try {
-      const image = captureImage(frame.video, frame.width, frame.height);
-      return image ? { ...image, timestampMs: frame.timestampMs, kneeAngleDeg: state.live?.kneeAngleDeg ?? null, pose: framePose(frame, state.live) } : null;
+      snapshotCanvas.current ??= document.createElement('canvas');
+      const image = captureImage(frame.video, frame.width, frame.height, snapshotCanvas.current);
+      return image ? { ...image, timestampMs: frame.timestampMs, kneeAngleDeg, pose: framePose(frame, state.live) } : null;
     } catch {
       return null;
     }
@@ -268,8 +277,19 @@ function App() {
     a.capturedAt = new Date().toISOString();
     const image = safeCapture(frame, state);
     if (image) a.images.set('start', image);
+    a.candidates.clear();
     a.trace = [];
     recordPose(a.trace, frame, state.live, true);
+  }
+
+  function resumePositioning(a) {
+    a.stage = 'positioning';
+    a.images.clear();
+    a.candidates.clear();
+    a.trace = [];
+    setCountdown(0);
+    setShowGo(false);
+    setCaptureStage('positioning');
   }
 
   function onFrame(frame, session) {
@@ -297,7 +317,10 @@ function App() {
       state = { ...state, setup: { ...state.setup, message: 'Step into the center with your head and feet in view.' } };
     }
     const setupSide = state.setup.checks.inFrame && frame.landmarks ? (frame.landmarks[23]?.visibility >= frame.landmarks[24]?.visibility ? 'left' : 'right') : null;
-    if (overlay.current) drawPose(overlay.current, { ...frame, crop }, state.live?.side ?? setupSide, Boolean(state.live && trackingMotion));
+    if (overlay.current) {
+      posePreview.current ??= createPosePreview(overlay.current);
+      posePreview.current.update({ ...frame, crop }, state.live?.side ?? setupSide, Boolean(state.live && trackingMotion));
+    }
     setView(state);
     const profile = currentReference.current;
     if (profile && !trackingMotion && state.setup.ready && state.live && profile.trackingSide !== state.live.side) {
@@ -329,11 +352,7 @@ function App() {
         setCountdown(0);
         setCaptureStage('armed');
       } else if (state.phase === 'setup') {
-        a.stage = 'positioning';
-        a.images.clear();
-        a.trace = [];
-        setCountdown(0);
-        setCaptureStage('positioning');
+        resumePositioning(a);
         return;
       } else {
         const remaining = Math.max(0, Math.ceil(COUNTDOWN_SECONDS - (timestampMs - a.countStartedAt) / 1000));
@@ -356,13 +375,22 @@ function App() {
       return;
     }
     if (state.phase === 'setup' && !state.events.length && timestampMs - a.armedAt > 800) {
-      clearAttempt('Your pose left the setup area. Check the framing and try again.');
+      if (a.movementStarted) clearAttempt('Your pose left the setup area. Check the framing and try again.');
+      else resumePositioning(a);
       return;
     }
     for (const event of state.events) {
+      if (event.type === 'capture-candidate') {
+        const image = safeCapture(frame, state, event.kneeAngleDeg);
+        if (image) a.candidates.set(timestampMs, image);
+      }
       if (event.type === 'capture') {
-        if (event.phase === 'start' && a.images.has('start')) continue;
-        const image = safeCapture(frame, state);
+        if (event.phase === 'start') {
+          a.movementStarted = true;
+          if (a.images.has('start')) continue;
+        }
+        const image = a.candidates.get(event.timestampMs)
+          ?? (event.timestampMs === timestampMs ? safeCapture(frame, state) : null);
         if (image) a.images.set(event.phase, image);
       }
       if (event.type === 'rep-discarded') {
@@ -449,7 +477,7 @@ function App() {
     enableAudio();
     setNotice('');
     attempt.current = {
-      stage: 'positioning', images: new Map(), trace: [],
+      stage: 'positioning', images: new Map(), candidates: new Map(), trace: [],
       variant: recorder.current.kind === 'demo' ? 'bodyweight' : variant,
     };
     setCaptureStage('positioning');

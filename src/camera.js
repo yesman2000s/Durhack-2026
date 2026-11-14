@@ -4,8 +4,8 @@ import simdBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm
 import fallbackLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js?url';
 import fallbackBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm?url';
 import { centerCameraCrop, sourceLandmarks } from './camera-crop.js';
+import { nextPoseSampleTime, POSE_SAMPLE_INTERVAL_MS } from './pose-cadence.js';
 
-const frameIntervalMs = 1000 / 15;
 const stalledVideoMs = 200;
 const modelAssetPath = `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`;
 
@@ -84,8 +84,9 @@ export function createCamera(video, { onFrame, onError }) {
     if (hasNewFrame) {
       session.lastVideoTime = mediaTime;
       session.lastVideoAt = timestampMs;
-      // Allow small camera clock variations around the nominal frame interval.
-      if (timestampMs - session.lastSampleAt >= frameIntervalMs - 5) {
+      // Keep a fixed cadence so 30 fps input can alternate two- and three-frame strides.
+      session.nextSampleAt ??= timestampMs;
+      if (timestampMs + 4 >= session.nextSampleAt) {
         try {
           const crop = cropContext ? centerCameraCrop(width, height) : { left: 0, width };
           let inferenceSource = video;
@@ -96,6 +97,7 @@ export function createCamera(video, { onFrame, onError }) {
             inferenceSource = cropCanvas;
           }
           const result = session.landmarker.detectForVideo(inferenceSource, timestampMs);
+          session.nextSampleAt = nextPoseSampleTime(session.nextSampleAt, timestampMs);
           session.lastSampleAt = timestampMs;
           session.crop = crop;
           onFrame({
@@ -118,9 +120,10 @@ export function createCamera(video, { onFrame, onError }) {
   function reportStall(session) {
     if (session !== active) return;
     const now = performance.now();
-    if (now - session.lastVideoAt < stalledVideoMs || now - session.lastSampleAt < frameIntervalMs) return;
+    if (now - session.lastVideoAt < stalledVideoMs || now - session.lastSampleAt < POSE_SAMPLE_INTERVAL_MS) return;
     if (!(video.videoWidth > 0 && video.videoHeight > 0)) return;
     session.lastSampleAt = now;
+    session.nextSampleAt = null;
     onFrame({ landmarks: null, timestampMs: now, width: video.videoWidth, height: video.videoHeight, crop: session.crop, video });
   }
 
@@ -138,6 +141,7 @@ export function createCamera(video, { onFrame, onError }) {
       usesVideoFrames: typeof video.requestVideoFrameCallback === 'function'
         && typeof video.cancelVideoFrameCallback === 'function',
       lastSampleAt: -Infinity,
+      nextSampleAt: null,
       lastVideoTime: -1,
       lastVideoAt: performance.now(),
     };

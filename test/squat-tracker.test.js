@@ -46,6 +46,49 @@ function barbellPose(depth, time, hipSpan = 0.14) {
   return points;
 }
 
+const fastStartMs = 3000;
+
+function timedRepDepth(time, downMs, upMs, amplitude = 1) {
+  const elapsed = time - fastStartMs;
+  if (elapsed <= 0 || elapsed >= downMs + upMs) return 0;
+  const amount = elapsed < downMs ? smooth(elapsed / downMs) : 1 - smooth((elapsed - downMs) / upMs);
+  return amplitude * amount;
+}
+
+function runAtCadence({ downMs, upMs, intervals, amplitude = 1, spikeAt = null }) {
+  const tracker = new SquatTracker();
+  const samples = [];
+  for (let t = 0, i = 0; t <= fastStartMs + downMs + upMs + 1600; t += intervals[i++ % intervals.length]) {
+    const time = Math.round(t);
+    const depth = time === spikeAt ? 1 : timedRepDepth(time, downMs, upMs, amplitude);
+    const state = tracker.update({ landmarks: demoLandmarks(depth), timestampMs: time, width: 960, height: 540, armed: time >= 2500 });
+    samples.push({ time, depth, state });
+  }
+  return { samples, events: samples.flatMap(({ state }) => state.events) };
+}
+
+function kneeAngleAtDepth(depth) {
+  const points = demoLandmarks(depth);
+  const [hip, knee, ankle] = [23, 25, 27].map((index) => points[index]);
+  const a = { x: (hip.x - knee.x) * 960, y: (hip.y - knee.y) * 540 };
+  const b = { x: (ankle.x - knee.x) * 960, y: (ankle.y - knee.y) * 540 };
+  return Math.atan2(Math.abs(a.x * b.y - a.y * b.x), a.x * b.x + a.y * b.y) * 180 / Math.PI;
+}
+
+function softStandingProfile(time, hipSpan = 0.27, shoulderSpan = 0.36, kneeSpan = 0.16) {
+  const depth = 0.30 + 0.70 * depthAt(time - 2800);
+  const joints = demoLandmarks(depth);
+  for (const [near, span] of [[11, shoulderSpan], [23, hipSpan], [25, kneeSpan]]) {
+    joints[near + 1].x = joints[near].x - span * 193 / 960;
+  }
+  // Keep the leg shape intact while the image position sways just a few pixels.
+  return joints.map((joint) => ({
+    ...joint,
+    x: joint.x + 0.004 * Math.sin(time / 330),
+    y: joint.y + 0.008 * Math.sin(time / 240),
+  }));
+}
+
 function run({ points = demoLandmarks, armed = () => true, lost = () => false, until = 6500, interval = stepMs } = {}) {
   const tracker = new SquatTracker();
   const states = [];
@@ -73,8 +116,8 @@ test("calibrates for two seconds and keeps five ordered evidence frames through 
   assert.deepEqual(rep.frames.map(({ timestampMs }) => timestampMs).toSorted((a, b) => a - b),
     rep.frames.map(({ timestampMs }) => timestampMs));
   const bottomCaptures = events.filter(({ type, phase }) => type === "capture" && phase === "bottom");
-  assert.ok(bottomCaptures.length > 1);
-  assert.equal(rep.frames[2].timestampMs, bottomCaptures.at(-1).timestampMs);
+  assert.equal(bottomCaptures.length, 1);
+  assert.equal(rep.frames[2].timestampMs, bottomCaptures[0].timestampMs);
   assert.ok(Math.abs(rep.frames[2].timestampMs - (standingMs + 1900)) < 300);
   assert.ok(rep.metrics.averageAscentLegLengthsPerSec > rep.metrics.averageDescentLegLengthsPerSec);
   assert.ok(rep.metrics.kneeAngleAtBottomDeg < 80);
@@ -133,6 +176,42 @@ test("accepts a slightly oblique profile without changing measurements from the 
   assert.equal(trackedRep(wide), undefined);
 });
 
+test("calibrates an upright soft-kneed profile through modest sway and isolated setup misses", () => {
+  const { states, events } = run({
+    interval: 80,
+    until: 7800,
+    armed: (time) => time >= 2800,
+    points: (_depth, time) => softStandingProfile(time),
+    lost: (time) => [640, 1440].includes(time),
+  });
+  assert.equal(states[2000 / 80].setup.ready, false, "missing frames are not counted as steady standing");
+  assert.equal(states[2720 / 80].setup.ready, true);
+  assert.equal(states[2720 / 80].live.side, "left");
+  assert.ok(states[2720 / 80].live.standingKneeAngleDeg >= 145 && states[2720 / 80].live.standingKneeAngleDeg < 153);
+  assert.ok(events.filter(({ type }) => type === "rep-complete").length === 1);
+
+  const frontal = run({ interval: 80, points: (_depth, time) => softStandingProfile(time, 0.32, 0.42, 0.36) });
+  assert.equal(frontal.states[2720 / 80].setup.checks.sideOn, false);
+  assert.ok(!frontal.events.some(({ type }) => type === "rep-complete"));
+});
+
+test("accepts several short missed poses without reporting them as usable samples", () => {
+  const missed = [3440, 3920, 4240, 4800, 5280];
+  const { states, events } = run({
+    interval: 80,
+    until: 7400,
+    points: (depth) => demoLandmarks(0.08 + 0.92 * depth),
+    lost: (time) => missed.includes(time),
+  });
+  assert.ok(missed.every((time) => states[time / 80].live === null));
+  const finished = events.filter(({ type }) => type === "rep-complete");
+  assert.equal(finished.length, 1);
+  const { rep } = finished[0];
+  assert.ok(rep.metrics.validFrameFraction >= 0.85 && rep.metrics.validFrameFraction < 0.9);
+  assert.equal(rep.metrics.maxTrackingGapMs, 160);
+  assert.ok(rep.frames.every(({ timestampMs }) => !missed.includes(timestampMs)));
+});
+
 test("brief pose loss does not substitute the far side or introduce a speed spike", () => {
   const { states, events } = run({
     points(depth, time) {
@@ -149,12 +228,20 @@ test("brief pose loss does not substitute the far side or introduce a speed spik
   assert.ok(rep.metrics.peakDescentLegLengthsPerSec < 1);
 });
 
-test("a gap over 300 ms cancels capture and requires standing calibration again", () => {
-  const { states, events } = run({ lost: (t) => t >= 3400 && t < 3800 });
+test("a sustained pose gap over 400 ms cancels capture and requires standing calibration again", () => {
+  const { states, events } = run({ lost: (t) => t >= 3400 && t < 3880 });
   assert.ok(events.some(({ type, reason }) => type === "rep-discarded" && reason === "tracking-gap"));
   assert.ok(!events.some(({ type }) => type === "rep-complete"));
-  assert.equal(states[95].phase, "setup");
-  assert.equal(states[95].setup.ready, false);
+  assert.equal(states[97].phase, "setup");
+  assert.equal(states[97].setup.ready, false);
+});
+
+test("a brief mid-rep interruption is bridged without keeping a missing frame", () => {
+  const { events } = run({ interval: 80, lost: (time) => time >= 3440 && time < 3680 });
+  const rep = events.find(({ type }) => type === "rep-complete")?.rep;
+  assert.ok(rep);
+  assert.equal(rep.metrics.maxTrackingGapMs, 320);
+  assert.ok(rep.frames.every(({ timestampMs }) => timestampMs < 3440 || timestampMs >= 3680));
 });
 
 test("movement remains trackable when face and toes are obscured and the far shoulder drifts", () => {
@@ -365,4 +452,51 @@ test("a small bend followed by standing does not produce a completed rep", () =>
   const { events } = run({ points: (depth) => demoLandmarks(depth * 0.19) });
   assert.ok(!events.some(({ type }) => type === "rep-complete"));
   assert.ok(!events.some(({ phase }) => phase === "finish"));
+});
+
+for (const fixture of [
+  { name: "a fast lowering and relaxed rise", downMs: 250, upMs: 1200, intervals: [1000 / 12] },
+  { name: "a relaxed lowering and fast rise", downMs: 1100, upMs: 250, intervals: [1000 / 12] },
+  { name: "a fast lowering and fast rise", downMs: 250, upMs: 250, intervals: [1000 / 12] },
+  { name: "a fast rep with irregular camera sampling", downMs: 300, upMs: 260, intervals: [72, 96, 83, 105, 61] },
+]) {
+  test(`retains the actual snapshot phases for ${fixture.name}`, () => {
+    const { samples, events } = runAtCadence(fixture);
+    assert.ok(samples.some(({ time, state }) => time < fastStartMs && state.setup.ready));
+    assert.equal(events.some(({ type }) => type === "rep-discarded"), false);
+    const completed = events.filter(({ type }) => type === "rep-complete");
+    assert.equal(completed.length, 1);
+    const { rep } = completed[0];
+    assert.deepEqual(rep.frames.map(({ phase }) => phase), ["start", "descent", "bottom", "ascent", "finish"]);
+    let bottomKneeAngle;
+    for (const { phase, timestampMs } of rep.frames.slice(1, -1)) {
+      const selected = events.findIndex((event) => event.type === "capture" && event.phase === phase);
+      const recorded = events.slice(0, selected).find((event) => event.type === "capture-candidate" && event.timestampMs === timestampMs);
+      assert.ok(recorded, `${phase} was sampled before it was selected`);
+      const { depth } = samples.find(({ time }) => time === timestampMs);
+      assert.ok(Math.abs(recorded.kneeAngleDeg - kneeAngleAtDepth(depth)) <= 0.051);
+      if (phase === "bottom") bottomKneeAngle = recorded.kneeAngleDeg;
+    }
+    assert.equal(rep.metrics.kneeAngleAtBottomDeg, bottomKneeAngle);
+    const timestamps = Object.fromEntries(rep.frames.map(({ phase, timestampMs }) => [phase, timestampMs]));
+    const deepestTime = fastStartMs + fixture.downMs;
+    const standingTime = deepestTime + fixture.upMs;
+    assert.ok(timestamps.descent > fastStartMs && timestamps.descent < deepestTime);
+    assert.ok(Math.abs(timestamps.bottom - deepestTime) <= Math.max(...fixture.intervals));
+    assert.ok(timestamps.ascent > deepestTime && timestamps.ascent < standingTime);
+    assert.ok(timestamps.finish >= standingTime);
+    assert.ok(rep.metrics.kneeAngleAtBottomDeg < 95);
+    assert.ok(rep.metrics.hipDropLegLengths > 0.34);
+    assert.ok(rep.metrics.ascentMs > 0 && rep.metrics.descentMs > 0);
+    assert.ok(rep.metrics.maxTrackingGapMs <= Math.ceil(Math.max(...fixture.intervals)));
+  });
+}
+
+test("a one-frame deep landmark glitch and a shallow bounce are insufficient for a fast rep", () => {
+  const oneFrame = runAtCadence({ downMs: 250, upMs: 250, intervals: [1000 / 12], amplitude: 0, spikeAt: 3250 });
+  const shallow = runAtCadence({ downMs: 250, upMs: 250, intervals: [1000 / 12], amplitude: 0.25 });
+  for (const { events } of [oneFrame, shallow]) {
+    assert.ok(!events.some(({ type }) => type === "rep-complete"));
+    assert.ok(!events.some(({ phase }) => phase === "finish"));
+  }
 });
