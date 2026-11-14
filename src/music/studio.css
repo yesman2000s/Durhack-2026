@@ -36,8 +36,8 @@ h1 { font-size: clamp(2rem, 6vw, 3.7rem); letter-spacing: -.055em; line-height: 
 h2 { font-size: 1.2rem; }
 p, small { color: #bacac5; }
 .studio-intro p, .transport p, .exercise-detail p { margin-top: 6px; }
-.profile { display: grid; gap: 7px; color: #bacac5; font-size: .85rem; }
-.profile select, .mute { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
+.demo-results { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.demo-results button, .mute { color: #eef5f1; background: #23322f; border: 1px solid #4b6059; border-radius: 8px; padding: 9px 12px; }
 .mixer, .exercise-detail {
   margin: 0 0 16px;
   border: 1px solid #394946;

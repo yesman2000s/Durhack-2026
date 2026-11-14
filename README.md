@@ -15,9 +15,9 @@ Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use th
 
 ## Try the music studio
 
-Open **Music studio** from the camera header, or visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Click **Play** and pick an exercise to see its part and unlocked segments. Exercise selection leaves the shared loop running. Compare **Early mix** and **Steady mix** to hear the squat track add hi-hats at day four. Changes to the mix take effect at the next bar. **Full mix** adds keys and melody.
+Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Click **Play** and select an exercise to see its instrument and unlocked segments. With Squat selected, try **Mock failure**, then **Mock success**. The successful response reports a streak of four days, adding hi-hats at the next bar. The shared loop keeps running when you select another exercise.
 
-The demo uses fixed daily streak profiles and a browser-synthesized instrumental. For a future imported beat, [Music AI Musical Stems](https://music.ai/modules/stem-separation/musical-stems/) can prepare individual instrument files and a separate vocal file for exclusion.
+The demo uses fixed results and a browser-synthesized instrumental. The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak. For a future imported beat, [Music AI Musical Stems](https://music.ai/modules/stem-separation/musical-stems/) can prepare individual instrument files and a separate vocal file for exclusion.
 
 ## Run the Python version
 

@@ -9,11 +9,15 @@ export const exercises = [
     segments: [[1, 'Main phrase'], [3, 'Answer phrase'], [4, 'High accents']] },
 ];
 
-export const demoProfiles = [
-  { id: 'early', name: 'Early mix', streaks: { squat: 3, 'step-up': 1, 'calf-raise': 0, 'wall-push-up': 0 } },
-  { id: 'steady', name: 'Steady mix', streaks: { squat: 4, 'step-up': 1, 'calf-raise': 0, 'wall-push-up': 0 } },
-  { id: 'full', name: 'Full mix', streaks: { squat: 4, 'step-up': 3, 'calf-raise': 4, 'wall-push-up': 4 } },
-];
+export const demoStreaks = { squat: 3, 'step-up': 1, 'calf-raise': 0, 'wall-push-up': 0 };
+
+// A confirmed result supplies the exercise ID and the server's current daily streak.
+export function applyExerciseResult(streaks, result) {
+  if (result?.success !== true || !exercises.some(({ id }) => id === result.exerciseId)) return streaks;
+  const { exerciseId, streak } = result;
+  if (!Number.isSafeInteger(streak) || streak < 0 || streak === streaks[exerciseId]) return streaks;
+  return { ...streaks, [exerciseId]: streak };
+}
 
 export function earnedSegments(exercise, streak = 0) {
   return exercise.segments.filter(([days]) => streak >= days).length;

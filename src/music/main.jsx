@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BARS, BPM, createBeat } from './beat.js';
-import { demoProfiles, earnedSegments, exercises } from './progression.js';
+import { applyExerciseResult, demoStreaks, earnedSegments, exercises } from './progression.js';
 import './studio.css';
 
 function Studio() {
-  const [profile, setProfile] = useState(demoProfiles[0]);
+  const [streaks, setStreaks] = useState(demoStreaks);
+  const [resultMessage, setResultMessage] = useState('');
   const [selected, setSelected] = useState(exercises[0].id);
   const [playing, setPlaying] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -15,7 +16,7 @@ function Studio() {
   const context = useRef(null);
   const beat = useRef(null);
   const exercise = exercises.find(({ id }) => id === selected);
-  const streak = profile.streaks[selected];
+  const streak = streaks[selected];
   const earned = earnedSegments(exercise, streak);
   const nextThreshold = exercise.segments[earned]?.[0];
 
@@ -46,7 +47,7 @@ function Studio() {
       await context.current.resume();
       beat.current = createBeat(context.current);
       for (const { id } of exercises) beat.current.mute(id, Boolean(muted[id]));
-      beat.current.start(profile.streaks);
+      beat.current.start(streaks);
       setPlaying(true);
     } catch {
       setError('Audio could not start. Try Play again.');
@@ -55,10 +56,14 @@ function Studio() {
     }
   }
 
-  function chooseProfile(event) {
-    const next = demoProfiles.find(({ id }) => id === event.target.value);
-    setProfile(next);
-    beat.current?.setStreaks(next.streaks);
+  function receiveDemoResult(success) {
+    const result = { exerciseId: selected, success, streak: 4 };
+    const next = applyExerciseResult(streaks, result);
+    setStreaks(next);
+    if (next !== streaks) beat.current?.setStreaks(next);
+    setResultMessage(success
+      ? `${exercise.name}: completed. Streak from response: ${result.streak} days.`
+      : `${exercise.name}: exercise was unsuccessful.`);
   }
 
   function toggleMute(id) {
@@ -78,11 +83,6 @@ function Studio() {
           <h1>My composition</h1>
           <p>Each exercise adds a part. Longer daily streaks build out that part of the beat.</p>
         </div>
-        <label className="profile">Demo profile
-          <select value={profile.id} onChange={chooseProfile} disabled={starting}>
-            {demoProfiles.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
-          </select>
-        </label>
       </div>
 
       <section className="mixer" aria-labelledby="mixer-title">
@@ -98,7 +98,7 @@ function Studio() {
         </div>
         <ul className="tracks" aria-label="Exercise tracks">
           {exercises.map((track) => {
-            const days = profile.streaks[track.id];
+            const days = streaks[track.id];
             const count = earnedSegments(track, days);
             return <li key={track.id} style={{ '--track-color': track.color }}>
               <button type="button" className="track-select" aria-pressed={track.id === selected}
@@ -130,6 +130,11 @@ function Studio() {
           </li>)}
         </ul>
         <p className="next">{nextThreshold ? 'Next segment at day ' + nextThreshold + '.' : 'All segments earned.'}</p>
+        <div className="demo-results" role="group" aria-label="Mock backend results">
+          <button type="button" disabled={starting} onClick={() => receiveDemoResult(true)}>Mock success</button>
+          <button type="button" disabled={starting} onClick={() => receiveDemoResult(false)}>Mock failure</button>
+        </div>
+        <p role="status">{resultMessage}</p>
       </section>
     </main>
   </div>;
