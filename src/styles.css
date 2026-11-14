@@ -470,6 +470,13 @@ button:enabled { cursor: pointer; }
   font-weight: 570;
 }
 
+.music-studio-link { text-decoration: none; }
+.music-studio-link:hover { text-decoration: underline; }
+
+@media (max-width: 650px) {
+  .music-studio-link span { display: none; }
+}
+
 .button-viewfinder-link {
   padding: 7px 8px;
   color: var(--on-ink);
@@ -909,6 +916,17 @@ button:enabled { cursor: pointer; }
 }
 
 .result-evidence { min-width: 0; }
+
+.form-feedback {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.form-feedback h3 { margin: 0; }
+.form-feedback p { margin: 8px 0; }
+.form-feedback ul { margin: 8px 0 0; padding-inline-start: 22px; }
+.form-feedback .button { margin-top: 4px; }
 
 .snapshots-grid {
   display: grid;

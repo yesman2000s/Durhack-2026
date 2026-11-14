@@ -11,6 +11,7 @@ import { poseInCenter } from './camera-crop.js';
 import { createPosePreview } from './pose-preview.js';
 import { makeMotionTrace, recordPose } from './motion-trace.js';
 import { SkeletonPlayback } from './skeleton-playback.jsx';
+import { FormFeedback } from './form-feedback.jsx';
 import { captureImage, downloadEvidence, FORM_GUIDE, framePose, makeEvidence } from './evidence.js';
 import './styles.css';
 
@@ -59,6 +60,7 @@ function Icon({ name }) {
     contract: <path d="M3 9h6V3m12 6h-6V3M9 21v-6H3m12 6v-6h6"/>,
     stop: <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>,
     upload: <><path d="M12 16V4m-4 4 4-4 4 4"/><path d="M4 16v4h16v-4"/></>,
+    music: <><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="18" cy="16" rx="3" ry="2"/></>,
     download: <><path d="M12 3v12m-4-4 4 4 4-4"/><path d="M4 16v4h16v-4"/></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
@@ -184,6 +186,7 @@ function RepResult({ result, onClear, onPlayGuide, titleRef }) {
         {mainValues.map(renderMetric)}
       </dl>
     </div>
+    {squat && result.snapshots.length > 0 && <FormFeedback rep={result} />}
     {Number.isFinite(m.thighToShinRatio) && <p className="leg-ratio">
       <strong>Thigh to shin</strong><strong>{ratio(m.thighToShinRatio)}</strong>
       <span>Hip to knee ÷ knee to ankle, estimated from the side view.</span>
@@ -844,6 +847,9 @@ function App() {
               <h1 id="studio-title">Mobility camera</h1>
             </div>
             <div className="studio-tools">
+              <a className="button button-studio-link music-studio-link" href="./music.html" aria-label="Music studio">
+                <Icon name="music" /><span>Music studio</span>
+              </a>
               <button className="button button-studio-link" onClick={showGuide}>Exercise guide</button>
               <button className="button button-studio-link fullscreen-button" aria-label={expanded ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
                 <Icon name={expanded ? 'contract' : 'expand'} /><span className="fullscreen-label">{expanded ? 'Exit full screen' : 'Full screen'}</span>
@@ -939,7 +945,7 @@ function App() {
           {active && captureStage === 'positioning' && view.setup.progress > 0 && <div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${view.setup.progress * 100}%` }} /></div>}
           <p className="setup-hint">{notice || setupMessage}</p>
           <PracticeGuide live={view.live} reference={reference} variant={variant} exercise={exercise} guideRef={guide} />
-          <p className="privacy-badge"><Icon name="shield" />Video stays on this device</p>
+          <p className="privacy-badge"><Icon name="shield" />Capture and replay run on this device</p>
         </aside>
       {result && <RepResult key={result.id} result={result} titleRef={reviewTitle} onPlayGuide={videoReview ? playVideoGuide : undefined} onClear={() => {
         setResult(null);
