@@ -59,7 +59,7 @@ export function useStudioPlayer({ song, tracks = [], mutedNotes = [], accountId 
     if (!context.current) {
       const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextImpl) throw new Error('This browser does not support music playback.');
-      context.current = new AudioContextImpl();
+      context.current = new AudioContextImpl({ latencyHint: 'playback' });
     }
     return context.current;
   }
