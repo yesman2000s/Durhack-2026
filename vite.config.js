@@ -2,20 +2,33 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 import { formScoringRoute } from './server/form-scoring.js';
 import { feedbackSpeechRoute } from './server/feedback-speech.js';
+import { createAccountService } from './server/accounts.js';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), ['GEMINI_', 'ELEVENLABS_']);
-  const scoreForm = formScoringRoute({
-    apiKey: env.GEMINI_API_KEY,
-    model: env.GEMINI_MODEL || undefined,
-  });
   const speakFeedback = feedbackSpeechRoute({
     apiKey: env.ELEVENLABS_API_KEY,
     voiceId: env.ELEVENLABS_VOICE_ID || undefined,
   });
   const mountFeedbackRoutes = (server) => {
-    server.middlewares.use(scoreForm);
+    const accounts = createAccountService();
+    // Database files live beside the source tree and must never be served by
+    // Vite's static or /@fs handlers, in either dev or preview mode.
+    server.middlewares.use((req, res, next) => {
+      let path;
+      try { path = decodeURIComponent(req.url?.split('?')[0] ?? '').replaceAll('\\', '/'); }
+      catch { res.statusCode = 400; res.end(); return; }
+      if (path.split('/').some((part) => part.toLowerCase().replace(/[. ]+$/, '') === '.data')) { res.statusCode = 403; res.end(); return; }
+      next();
+    });
+    server.middlewares.use(accounts.middleware);
+    server.middlewares.use(formScoringRoute({
+      apiKey: env.GEMINI_API_KEY,
+      model: env.GEMINI_MODEL || undefined,
+      scoreRep: accounts.scoreRep,
+    }));
     server.middlewares.use(speakFeedback);
+    server.httpServer?.once('close', () => accounts.store.close());
   };
   return {
     plugins: [{

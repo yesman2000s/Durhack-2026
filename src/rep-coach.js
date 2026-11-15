@@ -30,8 +30,15 @@ export function createRepCoach({
   const analyses = new Set();
   const waiting = [];
   const records = new Map();
+  const idleWaiters = new Set();
   const current = (job) => !disposed && job.generation === generation && !job.controller.signal.aborted;
   const update = (job, patch) => { if (current(job)) onUpdate(job.id, patch); };
+  function settleAnalyses(cancelled = false) {
+    if (!cancelled && (analyses.size || waiting.length)) return;
+    const result = { cancelled, failedIds: [...records.values()].filter((job) => job.status === 'error').map((job) => job.id) };
+    for (const resolve of idleWaiters) resolve(result);
+    idleWaiters.clear();
+  }
   function audioState(status, job, error = '') {
     if (!disposed) onAudioState({ status, repId: job?.id ?? null, repNumber: job?.repNumber ?? null, error });
   }
@@ -88,7 +95,7 @@ export function createRepCoach({
     try {
       const response = await fetchImpl('/api/form-speech', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: job.controller.signal,
-        body: JSON.stringify({ ...job.feedback, repNumber: job.repNumber }),
+        body: JSON.stringify({ ...job.feedback, ...(Number.isInteger(job.repNumber) ? { repNumber: job.repNumber } : {}) }),
       });
       if (!current(job) || currentSpeech !== job) return;
       if (!response.ok) {
@@ -160,6 +167,7 @@ export function createRepCoach({
       analyses.delete(job);
       job.body = null;
       if (current(job)) pumpAnalyses();
+      settleAnalyses();
     }
   }
 
@@ -196,6 +204,7 @@ export function createRepCoach({
   }
 
   function reset() {
+    settleAnalyses(true);
     generation++;
     for (const job of [...analyses, ...waiting]) { job.controller.abort(); job.body = null; }
     analyses.clear();
@@ -211,6 +220,16 @@ export function createRepCoach({
 
   return {
     enqueue,
+    waitForIdle() {
+      if (!analyses.size && !waiting.length) return Promise.resolve({ cancelled: disposed,
+        failedIds: [...records.values()].filter((job) => job.status === 'error').map((job) => job.id) });
+      return new Promise((resolve) => idleWaiters.add(resolve));
+    },
+    speak(summary) {
+      if (disposed || muted || !summary) return;
+      const job = { id: null, repNumber: null, generation, sequence: sequence++, controller: new AbortController() };
+      queueSpeech(job, { score: null, summary, tips: [] });
+    },
     retry: (rep, session) => enqueue(rep, session, true),
     reset,
     dispose() { disposed = true; reset(); },

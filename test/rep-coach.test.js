@@ -235,3 +235,52 @@ test('unmuting does not revive an old response that predates a newer muted revie
   assert.ok([...f.reviews.values()].every(({ status }) => status === 'complete'));
   f.coach.dispose();
 });
+
+test('finish barrier waits for queued and running reviews, reports failures, and supports retry', async () => {
+  const f = fixture();
+  f.coach.setMuted(true);
+  for (let index = 1; index <= 3; index++) f.coach.enqueue({ ...rep(index), attemptId: 'account-attempt' }, session(index));
+  assert.equal(JSON.parse(f.scores()[0].options.body).attemptId, 'account-attempt');
+  let settled = false;
+  const done = f.coach.waitForIdle().then((value) => { settled = true; return value; });
+  f.scores()[0].resolve(response(feedback()));
+  await turn();
+  assert.equal(settled, false);
+  f.scores()[1].resolve(response({ error: 'Temporary review failure' }, false));
+  await turn();
+  assert.equal(settled, false);
+  f.scores()[2].resolve(response(feedback()));
+  assert.deepEqual(await done, { cancelled: false, failedIds: ['2'] });
+  assert.equal(f.coach.retry(rep(2), session(2)), true);
+  const retried = f.coach.waitForIdle();
+  f.scores()[3].resolve(response(feedback()));
+  assert.deepEqual(await retried, { cancelled: false, failedIds: [] });
+  f.coach.dispose();
+});
+
+test('generation reset cancels a pending finish barrier instead of reporting a successful new attempt', async () => {
+  const f = fixture();
+  f.coach.enqueue(rep(1), session(1));
+  const old = f.coach.waitForIdle();
+  f.coach.reset();
+  f.coach.enqueue(rep(2), session(1, 'new-attempt'));
+  assert.equal((await old).cancelled, true);
+  f.coach.dispose();
+});
+
+test('motivational speech uses the same non-overlapping player and valid feedback payload', async () => {
+  const f = fixture();
+  f.coach.speak('One steady rep at a time.');
+  assert.deepEqual(JSON.parse(f.speech()[0].options.body), { score: null, summary: 'One steady rep at a time.', tips: [] });
+  f.speech()[0].resolve(response(null));
+  await turn();
+  assert.equal(f.audios[0].paused, false);
+  f.coach.enqueue(rep(1), session(1));
+  f.scores()[0].resolve(response(feedback()));
+  await turn();
+  assert.equal(f.speech().length, 1);
+  f.audios[0].end();
+  await turn();
+  assert.equal(f.speech().length, 2);
+  f.coach.dispose();
+});

@@ -46,7 +46,7 @@ export function jsonRoute({ path, maxBytes, sizeError, timeoutError, unavailable
       } catch {
         return fail(400, 'Send a valid JSON request.');
       }
-      const { contentType, body } = await handle(input, controller.signal);
+      const { contentType, body } = await handle(input, controller.signal, req);
       if (res.destroyed) return;
       res.setHeader('Content-Type', contentType);
       res.end(body);

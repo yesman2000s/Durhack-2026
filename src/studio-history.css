@@ -1,0 +1,48 @@
+.practice-library .history-heading p { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.history-filters { display: flex; align-items: end; gap: 14px; padding: 16px 23px; border-bottom: 1px solid var(--line); background: #f8f9f3; }
+.history-filters label { display: grid; gap: 6px; color: #64705d; font-size: 11px; font-weight: 600; }
+.history-filters select { min-width: 160px; min-height: 40px; border: 1px solid #dfe3d6; border-radius: 8px; padding: 8px 30px 8px 11px; background: #fffefb; color: var(--text); font-size: 13px; }
+.clear-history-filters { min-height: 40px; margin-left: auto; color: #476440; }
+.practice-library .attempt-art { display: grid; place-items: center; }
+.practice-library .attempt-art svg { width: 23px; height: 23px; }
+.practice-library .attempt-state { min-width: 95px; }
+.practice-library .filtered-empty { padding-block: 48px; }
+.filtered-empty h3 { font-size: 19px; }
+.practice-review { overflow-wrap: anywhere; }
+.practice-review > h2 { padding-right: 24px; }
+.practice-review .review-stats { flex-wrap: wrap; gap: 15px 24px; }
+.practice-review .history-review-error { padding: 12px 15px; margin: 0 0 14px; border-radius: 8px; background: #fff0e9; color: #90452f; font-size: 12px; }
+.practice-review .review-reps { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.practice-review .review-reps > section { min-width: 0; }
+.practice-review .review-reps > h3 { font-size: 15px; font-weight: 650; }
+.practice-review .review-snapshots { min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 6px; }
+.practice-review .review-snapshots figure { min-width: 0; max-width: 200px; flex: 1 0 115px; }
+.practice-review .review-snapshots img { display: block; max-width: 100%; }
+.practice-review ul { padding-left: 20px; margin: 9px 0 0; color: #56644c; font-size: 12px; line-height: 1.6; }
+.practice-review li + li { margin-top: 4px; }
+.practice-review .rep-review-issue { color: #90452f; }
+.practice-review .review-rep-heading { gap: 12px; }
+.practice-review .review-rep-heading > span { text-align: right; }
+@media (hover: hover) and (pointer: fine) {
+  .practice-library .attempt-row:hover { background: #f5f7ef; }
+}
+@media (max-width: 600px) {
+  .history-filters { padding: 14px; gap: 12px; flex-wrap: wrap; }
+  .history-filters label { flex: 1; min-width: 0; }
+  .history-filters select { min-width: 0; width: 100%; font-size: 16px; }
+  .history-filters .clear-history-filters { flex-basis: 100%; margin: -5px 0 0; min-height: 32px; justify-content: flex-end; }
+  .practice-library .attempt-state { margin-left: 47px; }
+  .practice-library .history-heading { align-items: flex-start; }
+  .practice-library .history-heading > span { white-space: nowrap; padding-top: 2px; }
+  .practice-library .history-heading p { max-width: 170px; font-size: 11px; line-height: 1.5; }
+}
+@media (max-width: 480px) {
+  .practice-library .attempt-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 50px; gap: 8px 12px; align-items: start; }
+  .practice-library .attempt-art { grid-column: 1; grid-row: 1 / 3; width: 34px; height: 34px; }
+  .practice-library .attempt-description { grid-column: 2; grid-row: 1; min-width: 0; }
+  .practice-library .attempt-description strong { font-size: 13px; line-height: 1.45; }
+  .practice-library .attempt-description small { font-size: 11px; line-height: 1.5; }
+  .practice-library .attempt-score { grid-column: 3; grid-row: 1; min-width: 0; }
+  .practice-library .attempt-state { grid-column: 2 / -1; grid-row: 2; justify-self: start; margin-left: 0; }
+  .practice-library .attempt-count, .practice-library .attempt-row > svg { display: none; }
+}

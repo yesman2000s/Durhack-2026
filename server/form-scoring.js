@@ -208,14 +208,16 @@ export async function scoreForm(input, {
   return result;
 }
 
-export function formScoringRoute(options) {
+export function formScoringRoute(options = {}) {
   return jsonRoute({
     path: '/api/form-score', maxBytes: maxBodyBytes,
     sizeError: 'Rep data exceeds the 12 MiB limit.',
     timeoutError: 'Gemini took too long. Try again.',
     unavailableError: 'Form coaching is temporarily unavailable. Try again.',
-  }, async (input, signal) => ({
-    contentType: 'application/json',
-    body: JSON.stringify(await scoreForm(input, { ...options, signal })),
-  }));
+  }, async (input, signal, req) => {
+    const review = () => scoreForm(input, { ...options, signal });
+    if (input?.attemptId !== undefined && !options.scoreRep) throw new HttpError(503, 'Saved workout scoring is unavailable.');
+    const feedback = options.scoreRep ? await options.scoreRep(req, input, review) : await review();
+    return { contentType: 'application/json', body: JSON.stringify(feedback) };
+  });
 }

@@ -1,8 +1,8 @@
 # Durhack-2026 · COMPOSE mobility camera
 
-Standalone browser and Python tools for capturing exercise reps from the side. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. The browser supports one rep or a full set, with automatic Gemini form feedback and optional ElevenLabs speech after each rep. For a squat, the first valid rep becomes your baseline for that camera session.
+COMPOSE turns exercise progress into music. The browser app combines account-backed workout history, seven levels for each of four movements, a music studio, and a side-view camera with automatic Gemini feedback and optional ElevenLabs speech. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. A standalone Python tool provides capture, tracking, and JSON export.
 
-The browser app has two pages: `index.html` is the movement home and music player, and `camera.html` is the recording and tracking page. Unlocked movement notes open the camera page, which has a Home link in its header.
+The browser has two pages: `index.html` is the music studio, account entry point, and practice library; `camera.html` captures the next available movement level. Select an available note and choose **Start exercise** to open its workout. Completed notes can be previewed, muted, or rearranged in the studio. **Back to music** returns from the camera.
 
 | Exercise | Why it is included | Practice reference |
 | --- | --- | --- |
@@ -13,32 +13,65 @@ The browser app has two pages: `index.html` is the movement home and music playe
 
 ## Run the browser version
 
-Use Node.js 20.19+ or 22.12+ (Node 24 tested). From this directory:
+Use Node.js 24, the recommended and tested runtime (24.11.0). The account server requires the built-in [`node:sqlite`](https://nodejs.org/api/sqlite.html) module; the previous Node 20 setup is no longer supported. From this directory:
 
 ```powershell
 npm.cmd ci
 npm.cmd run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use the address Vite prints. Choose **One rep** or **Full set** and an **Exercise**, then select **Start camera** or **Try simulated example**. Squat has **Bodyweight** and **Barbell** variants. The camera runs on localhost or HTTPS. The [MediaPipe Pose Landmarker Lite model](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker) and runtime are served locally.
+Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use the address Vite prints. Choose **Sign in**, then **Create an account** to register with a name, email address, and a password of 8–128 characters. Select an available movement note, choose **Start exercise**, then select **One rep** or **Full set** and **Start camera**, **Upload video**, or **Try simulated example**. Squat supports **Bodyweight** and **Barbell**; the first successful baseline fixes the variant for subsequent levels. The camera runs on localhost or HTTPS. The [MediaPipe Pose Landmarker Lite model](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker) and runtime are served locally. Real coaching requires the server credentials described below; the isolated QA server works without them.
+
+Before starting, **Your session** groups the **One rep** and **Full set** choices with switches for **Training overlay** and **Spoken feedback**. It sits beside the preview on desktop and below it on smaller screens. Open **Exercise settings** for the movement, squat type, and countdown sound; a movement opened from the studio stays fixed to its selected level. **About your recording** explains where images, feedback, and footage go. The setup checklist and **Exercise guide** remain available below the camera.
 
 In **Full set**, the countdown runs once and each completed rep is saved and sent for coaching while tracking continues. Choose **End set** at any time, or let the app finish after 12 seconds without another tracked movement. An incomplete attempt does not add a rep. A session with no detected movement times out after 45 seconds. The simulated full set performs three reps and then demonstrates automatic ending. Select a rep in the set history to review its snapshots and feedback; **Download set data** exports every completed rep.
 
-The camera stage takes up the first screen. Choose **Full screen** to hide the browser chrome where supported. The preview preserves the camera's height so you can keep your head and feet in frame. Choose **Review rep** after capture to open the snapshots and skeleton playback.
+Starting capture requests browser fullscreen and uses a viewport-filling fallback when native fullscreen is unavailable. During the set, the camera shows a rep count, target, coaching cue, audio control, and **End set**. The preview preserves the camera's height so you can keep your head and feet in frame. **Full screen** also toggles the view manually.
+
+After capture ends, the app leaves fullscreen and waits for all queued AI reviews before checking the level. A pending review cannot unlock music. If a review fails, choose **Retry and finish**, or **Save without unlocking** to retain the attempt with an error result. The result dialog shows the saved score and whether a note was earned; a captured rep alone is not a successful level. Review snapshots and skeleton playback from the camera, or open a saved attempt in the home page's practice library.
 
 To analyze a recording, choose the exercise, capture mode, and **Upload video**. A side view with the whole body visible works best. Leave about a second in the starting pose and hold briefly at the finish. The app scans for the first complete rep or a set using the full frame and the clip's own clock. A set also ends at the end of the clip. Choose **Play rep with guide** on the latest rep to see the amber example and your mint skeleton move together over the clip. MP4 (H.264) and WebM are good starting formats. The original clip stays on your device; completed rep images and measurements are sent to Gemini for coaching.
 
 ## Movement music
 
-The home page includes the beat player. Choose a genre, play the combined unlocked mix, or preview an exercise's instrument. A completed camera rep unlocks more music for that movement; progress is saved in this browser. Squat adds drums, knee raise adds bass, and push-ups add piano where the selected recording has a piano stem.
+Each movement has seven levels, and each level unlocks a 16-beat section of its instrument in a 112-beat excerpt. Squat adds drums, knee raise adds bass, push-ups add piano, and heel raises add guitar where those stems are available. All accounts start with zero unlocked notes. Levels progress independently for each movement.
 
-The home player uses beat-matched excerpts of three Kevin MacLeod instrumentals, separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock provides drums, bass and piano stems. Hip-hop and EDM use bass, a melodic residual stem, and frequency bands filtered from drums with FFmpeg; the push-up piano part uses that residual where a piano stem is unavailable.
+The server checks the following rules using only Gemini scores saved for that signed-in workout:
+
+- Level 1 requires at least one scored webcam or uploaded-video rep. The first scored rep in that successful attempt establishes the movement's baseline, `B`. Its first score is the baseline even if the attempt contains several reps.
+- Later levels pass with **either** one more scored rep than the previous successful level while the new attempt's mean score is at least `max(0, B - 3)`, **or** a mean score at least three points higher than the previous successful level, with at least one scored rep.
+- Attempt scores are the mean of non-null rep scores, rounded to two decimal places. A null score does not count as a scored rep. If the better-form target would exceed 100, only the extra-reps path is offered.
+- Only the next available level can be earned, and subsequent attempts must use the baseline's exercise variant. Simulated examples, cancelled attempts, error results, and attempts without a scored rep never unlock notes. Pending or failed reviews must be resolved before a completed attempt can be finalized.
+
+For example, a baseline of 80 followed by a successful one-rep level at 80 makes the next target **two scored reps averaging at least 77**, or **at least one scored rep averaging 83 or more**. Failed attempts do not raise the next target. The scoring baseline is separate from the local pose/range reference used by the movement tracker.
+
+Choose a music genre, then **Play my mix** to hear the combined unlocked notes, or select a completed note to preview its original song section. The player stays visible while browsing music or previous attempts, with play/pause, a seek bar, elapsed time, previous/next track, repeat, and desktop volume controls. **Back to full mix** exits a note preview. Pausing and seeking preserve the exact playback position. Changing tracks starts the new track at the beginning and continues playing if playback was active. Repeat loops the unlocked arrangement; playback never awards progress.
+
+While browsing, **Space** plays or pauses, **Left/Right** seeks five seconds, and **M** toggles mute. Shortcuts do not intercept typing, focused controls, or dialogs. Supported browsers also expose the current track to system media controls. The **Your next little win** card shows the next exercise target; **Let’s move** opens that workout. Starting an exercise before sign-in keeps that movement selected and continues at its next available level after login.
+
+The studio keeps its playful, Duolingo-inspired look: light colours, illustrated instruments, raised note cards, and a clear next step. Each exercise is a horizontal instrument track, with numbered clips progressing from left to right. Select a clip to open its target or playback controls in a dialog. Drag an unlocked clip left or right by its handle, or focus the handle and use **Left/Right** arrow keys, to change its visual position. On touch screens, swipe the clip body to scroll and use its handle to rearrange. Rearranging is cosmetic and does not interrupt playback: each note keeps its original beat position and instruments remain synchronized.
+
+Open **Playback tools** for the song overview, zoom controls, **Fit**, and **Follow**. Scrub the timeline ruler or song overview to seek through the unlocked mix. **Fit** resets the timeline view; **Follow** keeps the moving playhead in view until you scroll or rearrange a clip. Loaded clip waveforms and the song overview use decoded audio after playback or a note preview loads the relevant instrument. Turn **Include in mix** off to exclude that section, or use the speaker beside an instrument to mute all its unlocked notes. Mix changes retain the current playback position. The chosen song, note positions, and note mutes are saved to the account; volume and repeat apply to the current visit.
+
+The home player uses beat-matched excerpts of three Kevin MacLeod instrumentals, separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock provides drums, bass, piano, and guitar stems. Hip-hop and EDM map squat to low percussion, knee raise to bass, push-ups to the melodic residual, and heel raises to high percussion. The percussion bands are filtered from drums with FFmpeg; the studio labels the actual sounds as Drums, Bass, Melody, and Percussion for these genres.
 
 - Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
 - EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)
 - Rock · [Jet Fueled Vixen](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1700079)
 
 All three recordings are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+## Accounts and saved workouts
+
+In **My attempts**, filter by exercise or result to find previous practice. Each attempt shows every rep's summary, tips and review status. The latest server review takes precedence over older local feedback, while locally saved snapshots and recordings remain available alongside it.
+
+The Vite server creates `.data/compose.sqlite` on first use. SQLite stores accounts, hashed passwords, hashed session tokens, individual rep scores and written feedback, attempt history, completed levels, and music settings. This directory is ignored by Git and blocked from HTTP downloads. Progress belongs to the account in this database and survives browser reloads and server restarts. Stop the server before copying `.data/` to move or back up its saved accounts and workouts.
+
+Sign-in uses a 30-day `HttpOnly`, `SameSite=Lax` session cookie, with `Secure` on HTTPS. Signing out revokes the session. Passwords use salted scrypt hashes, and credential attempts are rate limited. Registration is local to this application; no email verification or password-reset service is configured.
+
+Full footage and rep evidence use a separate store: the browser's `compose-local-attempts` IndexedDB database, keyed by account ID and attempt ID. Webcam footage is recorded without microphone audio where MediaRecorder is available; uploaded videos and rep snapshots are saved locally too. The practice library combines the server's score/feedback history with footage available in that browser. Signing in on another device can retrieve server history, but does not transfer recordings. Clearing site data, using another browser/origin, or browser storage eviction can remove local footage. The app requests persistent storage and reports storage failures; use **Download recording**, **Download rep data**, or **Download set data** to retain your own copy.
+
+The SQLite database does not contain the original videos or image evidence. Pose detection runs locally, but completed rep JPEGs and measured evidence are sent to Gemini for coaching; ElevenLabs receives only narration text. Simulated attempts can appear in history without awarding music. The Python tool's exports do not create accounts or unlock browser levels by themselves.
 
 ## Run the Python version
 
@@ -65,7 +98,7 @@ Use `--video` to analyze a local recording. The app saves the first complete rep
 1. Set the laptop on a stable surface to see you from the side. For a push-up, position the camera low enough to see your head, hands and toes. For the standing exercises, keep your head and feet visible.
 2. Hold your starting position for at least one second. Start push-ups near the top of a floor plank; a slight elbow bend, natural hip height, and a modest camera angle are okay. The tracker uses your own starting pose for the return, rather than requiring locked elbows or an exact model pose. Start the other exercises standing. As soon as the camera confirms one steady second, it saves your pose and starts a two-second countdown to **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
 3. Perform one movement through a comfortable range. Stand back up after a squat, or return to the starting position for another exercise, and hold briefly to finish. The squat measures knee bend and hip motion relative to the feet, so shifting your stance does not end a rep by itself. **Training overlay** starts on by default in the browser. Its translucent amber human silhouette demonstrates a rep at Go and stays visible until capture ends. The solid mint skeleton shows the tracked pose. The guide illustrates a movement; tracking does not require you to match its angles or timing.
-4. Review the five snapshots. Use **Play skeleton** and the time slider in the browser, or **P** in Python, to replay the tracked movement. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Until export, the latest rep is held in memory.
+4. Review the available phase snapshots. Use **Play skeleton** and the time slider in the browser, or **P** in Python, to replay the tracked movement. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Signed-in browser attempts also save evidence to IndexedDB and scored feedback to the server. The Python tool requires an export to retain its current result.
 
 The side-view example shows how the hips, knees, and torso move. It scales the sketch using estimated thigh-to-shin and torso-to-leg ratios and lets you choose a range. Your first rep records your own comfortable range. A camera view and body proportions alone cannot determine an ideal or safe depth. The detector needs visible movement to distinguish a squat from a small posture change; a shallow or interrupted attempt may not count.
 
@@ -85,17 +118,17 @@ The camera targets 12 pose measurements per second. Each live sample freezes the
 
 The metrics include lowering and rising time, pause, mean and peak projected vertical hip speed relative to the feet, knee bend and return angle, bottom hip, torso and shin angles, estimated standing proportions, and tracking quality. Speed is scaled to the projected standing leg length, so it is in leg lengths per second. Missing or low-quality poses are excluded. View angle, clothing, lighting and camera position can all affect these estimates. A side view cannot assess side-to-side knee alignment, spinal loading, or overall safety.
 
-The JPEGs may identify the person in the recording. Pose tracking runs locally. Completing a browser rep automatically sends its snapshots, measurements, motion trace and recent set context to Google Gemini. ElevenLabs receives only the feedback narration text. A downloaded export contains the images and measurements. Browser set exports include the session ID, end reason, rep order and any feedback received before export. Reps remain in memory until a new session or page reload, so download a set to retain it.
+The JPEGs may identify the person in the recording. Pose tracking runs locally. Completing a browser rep automatically sends its snapshots, measurements, motion trace and recent set context to Google Gemini. ElevenLabs receives only the feedback narration text. A downloaded export contains the images and measurements. Browser set exports include the session ID, end reason, rep order and any feedback received before export. Signed-in attempts are also saved as described above; an export is a portable copy independent of browser storage.
 
 ## Coach each rep with Gemini
 
 For a new checkout, copy `.env.example` to the ignored `.env.local` file and set `GEMINI_API_KEY`. If `.env.local` already exists, update it without overwriting its other credentials. Connect ElevenLabs using the onboarding command below, or supply `ELEVENLABS_API_KEY` as a server environment variable. Do not prefix these keys with `VITE_`. The default model is [Gemini 3.6 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash). Set `GEMINI_MODEL` to use another compatible Gemini 3 model supporting image input, structured output and low thinking. Restart Vite after changing the configuration.
 
-Run `npm.cmd run dev`, capture any supported exercise or use **Try simulated example**. Every completed rep automatically enters the review queue. Gemini receives all captured phase JPEGs and pose metadata, confidence values, the timestamped motion trace, metrics, reference, practice guide and up to five recent rep summaries with available feedback. Exercise-specific prompts ask for evidence-based improvements for the next rep, allow natural body proportions and modest camera angles, and treat uncertain tracking as uncertainty rather than poor form. Simulated inputs are identified as examples. The prompt and rubrics live in [server/form-scoring.js](server/form-scoring.js).
+Run `npm.cmd run dev`, sign in, and capture any supported exercise or use **Try simulated example**. Every completed rep automatically enters the review queue. Gemini receives all captured phase JPEGs and pose metadata, confidence values, the timestamped motion trace, metrics, reference, practice guide and up to five recent rep summaries with available feedback. Exercise-specific prompts ask for evidence-based improvements for the next rep, allow natural body proportions and modest camera angles, and treat uncertain tracking as uncertainty rather than poor form. Simulated inputs are identified as examples. The prompt and rubrics live in [server/form-scoring.js](server/form-scoring.js).
 
-Two reviews can run concurrently while capture continues. Each rep keeps its written feedback or a retryable error. Starting a new session cancels the previous session's pending coaching. Manual or automatic set ending keeps already queued reviews running.
+Two reviews can run concurrently while capture continues. Each rep keeps its written feedback or a retryable error. Manual or automatic set ending keeps already queued reviews running, and the app prevents another attempt from starting until the current one has finished review and saving. Successful review retries return the stored feedback without re-scoring or crediting the rep twice. Failed reviews can be retried while the attempt remains active.
 
-For other integrations, send a browser or Python rep export directly to the same endpoint:
+For standalone integrations, send rep evidence without an `attemptId` to the same endpoint. Python rep exports can be used directly; remove `attemptId` from an account-associated browser export when requesting standalone practice feedback:
 
 ```powershell
 curl.exe -X POST http://localhost:5173/api/form-score -H "Content-Type: application/json" --data-binary "@captures/rep.json"
@@ -109,6 +142,23 @@ The response contains a provisional practice score from 0 to 100, a short summar
 
 When Gemini needs clearer evidence, `score` is `null` and it can return one filming cue. This is coaching from imperfect 2D evidence, not a medical or safety assessment. The endpoint validates up to 12 MiB of JSON, five JPEGs and 400 ordered motion frames. An optional `session` object contains `id`, `mode` (`single-rep` or `set`), `repNumber` and `previousReps`. Existing browser and Python rep exports remain accepted.
 
+Calls without `attemptId` remain available for standalone practice feedback and never write progression. Account-backed scoring adds the server-issued `attemptId` and a unique rep `id` to the evidence. The server checks session ownership, exercise, source, and variant before calling Gemini, then stores the returned score and feedback. Clients cannot award levels by sending their own `score`, `repCount`, or `passed` values.
+
+The same-origin account endpoints are:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/auth/me` | Current public user, or `user: null`. |
+| `POST /api/auth/register`, `POST /api/auth/login` | Accept email/password and, for registration, name; set the session cookie. |
+| `POST /api/auth/logout` | Revoke the session; send an empty JSON object. |
+| `GET /api/progress` | Per-movement baseline, variant, level states, next target, and saved music settings. |
+| `PATCH /api/settings` | Save `songId`, `positions`, and/or `mutedNotes`. Note keys use `exerciseId:level`; visual slots are 0–6. |
+| `POST /api/attempts` | Start the next available level with `exerciseId`, `level`, `source`, `mode`, and optional `variant` (default `bodyweight`). |
+| `GET /api/attempts`, `GET /api/attempts/:id` | Read the account's latest 100 attempts or one attempt with per-rep feedback. |
+| `POST /api/attempts/:id/finish` | Finalize once reviews settle, using `reason: "completed"`, `"cancelled"`, or `"error"`; return the saved attempt and refreshed progress. |
+
+Account writes require JSON and reject cross-origin requests. Protected endpoints require the session cookie. Finalization is idempotent; pending reviews, or failed reviews with `reason: "completed"`, return HTTP 409. A server restart marks interrupted reviews as retryable errors rather than awarding progress.
+
 ## Hear the feedback
 
 Run the official onboarding command from the project directory and follow its account authorization steps:
@@ -121,9 +171,21 @@ The CLI saves `ELEVENLABS_API_KEY` in the ignored `.env.local` file. The server 
 
 Speech never overlaps. If reviews arrive faster than they can be spoken, the next audio uses the newest feedback and older unsounded cues are skipped; all written reviews remain available. `POST /api/form-speech` accepts the `{score, summary, tips}` returned by `/api/form-score`, plus optional `repNumber`, and responds with `audio/mpeg`. The legacy `{score, tips}` payload remains supported. ElevenLabs receives only the narration text.
 
-Vite dev and preview serve both APIs from the same origin. Static deployments of `dist/` need a server mounting `formScoringRoute` and `feedbackSpeechRoute` at the same origin. Keep both routes behind application authentication and rate limits if deploying beyond localhost.
+Vite dev and preview mount the account, progression, form-scoring, and speech routes from the same origin. A static-only deployment of `dist/` is insufficient. A deployed Node server must mount `createAccountService().middleware`, pass its `scoreRep` hook to `formScoringRoute`, mount `feedbackSpeechRoute`, and retain the SQLite data directory. Before exposing the paid coaching routes publicly, add deployment-level authentication and rate limits for standalone practice and speech requests, which remain available without an attempt session.
 
 ## Verify
+
+For an isolated browser QA workspace with disposable data and no provider credentials, run:
+
+```powershell
+node scripts/studio-fixture-server.mjs
+```
+
+Open [http://localhost:5175](http://localhost:5175) and sign in with **studio@example.test** / **Compose-test-2026**. These are public fixture credentials, not a real account. The visibly marked **TEST WORKSPACE** uses an in-memory SQLite database, does not load `.env` files or the normal Vite configuration, and cannot access paid APIs. Server outbound fetches and external browser requests are blocked. Coaching always returns a fixture score of 82; speech is a short locally generated tone. Stopping and restarting the fixture resets server accounts and progress; recordings saved to that origin's browser IndexedDB remain until site data is cleared.
+
+The fixture starts with squat level 2, knee raise level 1, push-up level 3, and no heel-raise levels unlocked, plus a failed squat attempt. It exercises normal sign-in, note previews/mutes/rearrangement, history, and capture/review flows without modifying `.data/compose.sqlite`. Simulated examples still cannot unlock levels, even with the fixture's fake score. Use the normal dev server and real captures to validate real provider feedback.
+
+Run the automated checks separately:
 
 ```powershell
 npm.cmd test

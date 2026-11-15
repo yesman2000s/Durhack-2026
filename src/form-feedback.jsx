@@ -12,7 +12,7 @@ export function FormFeedback({ rep, review, onRetry }) {
       {review?.error && <p>{review.error}</p>}
       {feedback && <>
         {feedback.summary && <p>{feedback.summary}</p>}
-        {feedback.score !== null && <p><strong>{feedback.score} / 100</strong> practice score</p>}
+        {feedback.score !== null && <p><strong>{feedback.score} / 100</strong> form score</p>}
         {!feedback.summary && feedback.score === null && <p>A clearer view is needed to review this rep.</p>}
         {feedback.tips.length > 0 && <ul>{feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}
       </>}

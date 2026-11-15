@@ -1,0 +1,274 @@
+/* The camera belongs to the same warm, playful studio as the music editor. */
+.playful-camera {
+  --blue: #1946e8;
+  --blue-hover: #143bd2;
+  --blue-soft: #eef1ff;
+  --mint: #779b52;
+  --text: #29332d;
+  --muted: #707969;
+  --line: #eae4d8;
+  --line-strong: #ded5c6;
+  --page: #fffaf1;
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --tone: #b26549;
+  --tone-soft: #fff0e8;
+  --tone-border: #eed1c1;
+  --tone-shadow: #e8bda8;
+  min-height: 100dvh;
+  color: var(--text);
+  background: var(--page);
+  padding-bottom: 30px;
+}
+.playful-camera[data-exercise="knee-raise"] { --tone: #4775a2; --tone-soft: #eaf3ff; --tone-border: #cddff0; --tone-shadow: #b9cde1; }
+.playful-camera[data-exercise="push-up"] { --tone: #927026; --tone-soft: #fff4d8; --tone-border: #efdfb3; --tone-shadow: #e1d09a; }
+.playful-camera[data-exercise="heel-raise"] { --tone: #617e43; --tone-soft: #eff5e4; --tone-border: #d9e3c9; --tone-shadow: #c3d2aa; }
+.playful-camera :is(button, a, input, select, summary) { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.playful-camera :focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+.playful-camera .button, .playful-camera .button-link { min-height: 44px; padding: 10px 15px; border-radius: 11px; font-size: 13px; font-weight: 750; text-decoration: none; transition: transform 120ms var(--ease-out); }
+.playful-camera .button-primary { color: #fff; background: var(--blue); border: 1px solid #1536b9; border-bottom-width: 4px; box-shadow: none; transform: none; }
+.playful-camera .button-secondary, .playful-camera .button-stop { color: #616d59; background: #fffefb; border: 1px solid var(--line-strong); border-bottom-width: 3px; box-shadow: none; }
+.playful-camera .button:active:enabled:not(:focus-visible) { transform: scale(.97); }
+.playful-camera .button-link, .playful-camera .text-button { color: var(--blue); }
+.playful-camera .camera-panel { --studio-muted: #737c6c; --studio-control: #fffefb; --studio-border: var(--line-strong); --stop: #d8c8b7; }
+.playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) {
+  width: min(100%, 1280px);
+  height: auto;
+  min-height: 0;
+  margin-inline: auto;
+  padding: 0 28px;
+  gap: 0 24px;
+  grid-template: "header header" auto "error error" auto "level level" auto "viewport dock" auto / minmax(0, 1fr) 320px;
+  background: transparent;
+}
+.playful-camera .app-header { min-height: 88px; padding: 18px 0; gap: 24px; border-color: var(--line); }
+.playful-camera .studio-heading { gap: 32px; }
+.playful-camera .camera-wordmark { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; color: var(--text); font-size: 19px; font-weight: 850; letter-spacing: -.04em; text-decoration: none; }
+.playful-camera .camera-wordmark > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: white; background: var(--blue); box-shadow: 0 3px 0 #1536b9; }
+.playful-camera .camera-heading-copy { padding-left: 28px; border-left: 1px solid var(--line); }
+.playful-camera .camera-eyebrow { display: block; color: #7d8574; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.playful-camera .studio-heading h1 { margin-top: 6px; font-size: 23px; font-weight: 800; letter-spacing: -.04em; }
+.playful-camera .level-title { display: inline-block; margin-left: 5px; color: var(--tone); font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.playful-camera .studio-tools { gap: 8px; }
+.playful-camera .button-studio-link { min-height: 40px; padding: 8px 10px; color: #737b6c; font-size: 11px; border-radius: 9px; white-space: nowrap; }
+.playful-camera .home-link { color: var(--blue); background: #efefff; }
+.playful-camera .fullscreen-button { border: 1px solid var(--line); background: #fffefb; }
+.playful-camera .fullscreen-button .fullscreen-label { display: none; }
+.playful-camera .level-brief { margin: 23px 0; padding: 17px 20px; gap: 15px; border: 1px solid var(--tone-border); border-radius: 15px; background: var(--tone-soft); box-shadow: 0 3px 0 var(--tone-shadow); }
+.playful-camera .level-seed { width: 45px; height: 45px; background: #ffffff80; color: var(--tone); border: 1px solid var(--tone-border); border-radius: 12px; }
+.playful-camera .level-seed svg { width: 34px; height: 34px; }
+.playful-camera .level-brief strong { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
+.playful-camera .level-brief p { margin-top: 5px; font-size: 12px; line-height: 1.5; color: #737665; }
+.playful-camera .level-brief .button { flex-shrink: 0; }
+.playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .viewport-wrap {
+  height: clamp(420px, 43vw, 520px);
+  margin: 0;
+  padding: 0;
+  align-content: normal;
+  border: 1px solid #e5dfd3;
+  border-radius: 18px;
+  box-shadow: 0 4px 0 #eae3d6;
+}
+.playful-camera .viewport-wrap[data-active="false"], .playful-camera .viewport[data-idle="true"] { color: var(--text); background: #f7f8f0; }
+.playful-camera .viewport[data-idle="true"] { background-image: radial-gradient(#dfe5d4 1px, transparent 1px); background-size: 24px 24px; }
+.playful-camera .frame-guide[data-idle="true"] { --corner: #d0dcc2; --mark: 30px; --stroke: 3px; inset: 23px; filter: none; }
+.playful-camera .empty-camera { width: min(100%, 470px); gap: 12px; padding: 40px 24px 28px; }
+.playful-camera .empty-camera-icon { width: 66px; border-radius: 19px; border: 1px solid #dfe4f8; background: #edf0ff; color: var(--blue); box-shadow: 0 4px 0 #d2dbf8; margin-bottom: 7px; }
+.playful-camera .empty-camera strong { color: #303b2f; font-size: clamp(25px, 2.4vw, 31px); font-weight: 800; letter-spacing: -.045em; }
+.playful-camera .empty-camera p { max-width: 34ch; color: #75806c; font-size: 13px; line-height: 1.6; }
+.playful-camera .empty-actions { margin-top: 10px; gap: 9px 12px; }
+.playful-camera .empty-actions .button-primary { min-height: 46px; min-width: 190px; }
+.playful-camera .button-viewfinder-link { min-height: 36px; padding: 8px 4px; color: #69765d; font-size: 11px; font-weight: 650; }
+.playful-camera .camera-status { inset: 16px auto auto 17px; max-width: calc(100% - 34px); padding: 7px 10px; color: #f8fbf4; background: #1d2b23e8; border: 1px solid #ffffff20; border-radius: 9px; font-size: 10px; font-weight: 700; }
+.playful-camera .viewport-wrap[data-active="false"] .camera-status { color: #7f8a73; background: #fffefbe8; border-color: #e4e9da; }
+.playful-camera .phase-pill { font-size: 15px; max-width: min(70%, 480px); top: 16px; padding: 8px 13px; border-radius: 12px; }
+.playful-camera .demo-tag, .playful-camera .training-tag { font-size: 10px; }
+.playful-camera .camera-dock { display: grid; align-self: start; align-items: start; justify-content: stretch; min-width: 0; gap: 17px; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: #fffefb; box-shadow: 0 4px 0 #eee6d8; }
+.playful-camera .session-heading h2 { font-size: 21px; font-weight: 800; letter-spacing: -.035em; }
+.playful-camera .session-heading p { margin-top: 5px; color: #89917e; font-size: 11px; line-height: 1.5; }
+.playful-camera .capture-mode-picker { margin: 0; padding: 0; min-width: 0; border: 0; }
+.playful-camera .capture-mode-picker legend { margin-bottom: 9px; padding: 0; font-size: 11px; color: #697460; font-weight: 700; }
+.playful-camera .capture-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.playful-camera .capture-choice { min-height: 70px; padding: 12px 8px; border: 1px solid #e4e4da; border-bottom-width: 3px; border-radius: 11px; color: #6b765e; background: #fff; text-align: center; }
+.playful-camera .capture-choice strong { display: block; font-size: 13px; font-weight: 750; }
+.playful-camera .capture-choice small { display: block; margin-top: 6px; font-size: 9px; font-weight: 400; }
+.playful-camera .capture-choice[aria-pressed="true"] { color: var(--blue); background: #eff2ff; border-color: #b8c8ff; }
+.playful-camera .capture-choice:disabled { opacity: .5; cursor: default; }
+.playful-camera .capture-help { margin-top: 10px; color: #8a927f; font-size: 10px; line-height: 1.6; }
+.playful-camera .camera-toggles { display: grid; gap: 0; border-top: 1px solid var(--line); padding-top: 5px; }
+.playful-camera .training-toggle { display: flex; justify-content: space-between; min-height: 58px; gap: 12px; color: #45523c; font-size: 12px; font-weight: 700; }
+.playful-camera .training-toggle > span { min-width: 0; }
+.playful-camera .training-toggle small { display: block; margin-top: 4px; font-size: 10px; font-weight: 400; color: #8a927e; }
+.playful-camera .training-toggle input { appearance: none; order: 2; width: 37px; height: 23px; flex: 0 0 37px; padding: 3px; border: 1px solid #d4d9cc; border-radius: 20px; background: #e5e8df; cursor: pointer; }
+.playful-camera .training-toggle input::before { content: ''; display: block; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #48523c30; }
+.playful-camera .training-toggle input:checked { background: #789750; border-color: #6b8846; }
+.playful-camera .training-toggle input:checked::before { transform: translateX(13px); }
+.playful-camera .training-toggle input:disabled { opacity: .45; cursor: default; }
+.playful-camera .session-options { border-top: 1px solid var(--line); }
+.playful-camera .session-options > summary, .playful-camera .camera-privacy > summary { display: flex; align-items: center; justify-content: space-between; min-height: 40px; gap: 8px; color: #727d67; font-size: 11px; font-weight: 700; cursor: pointer; list-style: none; }
+.playful-camera :is(.session-options, .camera-privacy) > summary::-webkit-details-marker { display: none; }
+.playful-camera :is(.session-options, .camera-privacy) > summary::after { content: '+'; font-size: 18px; font-weight: 400; }
+.playful-camera :is(.session-options, .camera-privacy)[open] > summary::after { content: '−'; }
+.playful-camera .camera-settings, .playful-camera .camera-settings:has(> :only-child) { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: none; gap: 12px; padding: 8px 0; }
+.playful-camera .example-control { display: grid; gap: 7px; margin: 0; color: #6a7660; font-size: 11px; font-weight: 650; }
+.playful-camera .example-control select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--text); background: #fff; font-size: 13px; }
+.playful-camera .session-exercise { font-size: 11px; color: var(--muted); }
+.playful-camera .session-exercise strong { display: block; margin-top: 5px; color: var(--text); font-size: 13px; }
+.playful-camera .camera-controls { display: flex; flex-wrap: wrap; justify-content: stretch; gap: 9px; }
+.playful-camera .camera-controls:empty { display: none; }
+.playful-camera .camera-controls .button, .playful-camera .camera-controls:has(> :nth-child(4)) .button { flex: 1 1 auto; min-height: 43px; padding: 10px 12px; font-size: 12px; border-width: 1px 1px 3px; border-radius: 10px; }
+.playful-camera .camera-panel .button-sound[aria-pressed="true"] { color: #526b35; border-color: #c9d9b5; background: #f1f6e9; }
+.playful-camera .coaching-live { padding: 13px; border: 1px solid #d8e4c8; border-radius: 12px; background: #f1f6e9; }
+.playful-camera .coaching-live strong { color: #607f43; font-size: 11px; }
+.playful-camera .coaching-live p { font-size: 12px; line-height: 1.6; }
+.playful-camera .coaching-live > span { font-size: 10px; }
+.playful-camera .camera-privacy { padding-top: 1px; }
+.playful-camera .camera-privacy > summary { justify-content: flex-start; gap: 8px; font-size: 10px; font-weight: 500; }
+.playful-camera .camera-privacy > summary svg { width: 14px; height: 14px; }
+.playful-camera .camera-privacy > p { color: #858d7d; font-size: 10px; line-height: 1.7; }
+.playful-camera .studio-details { width: min(100%, 1280px); gap: 24px; padding: 25px 28px 0; }
+.playful-camera .setup-panel, .playful-camera .result-panel, .playful-camera .set-results { border-radius: 17px; border-color: var(--line); box-shadow: 0 4px 0 #eee6d8; padding: 23px; }
+.playful-camera .setup-panel h2, .playful-camera .result-header h2 { color: var(--text); font-size: 22px; font-weight: 800; }
+.playful-camera .step-copy { color: #848c7b; font-size: 12px; line-height: 1.6; }
+.playful-camera .checklist { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: 23px 0; }
+.playful-camera .check-item { gap: 11px; }
+.playful-camera .check-icon { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 11px; color: var(--tone); background: var(--tone-soft); border-color: var(--tone-border); box-shadow: 0 2px 0 var(--tone-shadow); font-size: 13px; }
+.playful-camera .check-item[data-passed="true"] .check-icon { color: #fff; background: #648744; border-color: #648744; box-shadow: 0 2px 0 #506e35; }
+.playful-camera .check-text strong { font-size: 12px; font-weight: 750; }
+.playful-camera .check-text small { margin-top: 5px; color: #89917f; font-size: 11px; line-height: 1.6; }
+.playful-camera .setup-hint { font-size: 12px; color: #64774e; }
+.playful-camera .practice-guide { color: var(--muted); font-size: 12px; }
+.playful-camera .practice-guide summary { min-height: 46px; font-size: 12px; font-weight: 700; }
+.playful-camera .practice-guide-body { font-size: 12px; line-height: 1.7; }
+.playful-camera .form-example { color: #8b9b78; background: #f6f8ee; border-color: #e1e7d5; border-radius: 12px; }
+.playful-camera .form-feedback { margin-block: 20px; padding: 18px; border-radius: 13px; background: #eff5e5; border-color: #dce7cc; color: #5c704a; }
+.playful-camera .form-feedback h3 { font-size: 16px; color: #3e5332; }
+.playful-camera .form-feedback p, .playful-camera .form-feedback li { font-size: 13px; line-height: 1.6; }
+.playful-camera .result-header p { color: #8a927f; font-size: 12px; }
+.playful-camera .result-actions { gap: 8px; }
+.playful-camera .result-actions .button { min-width: 0; font-size: 11px; min-height: 40px; }
+.playful-camera .result-layout { margin-top: 20px; }
+.playful-camera .metric-card dt { font-size: 11px; color: #839075; }
+.playful-camera .metric-card dd { color: #34452e; font-size: 24px; }
+.playful-camera .metric-card dd small { font-size: 10px; }
+.playful-camera .snapshot-card, .playful-camera .skeleton-playback { border-radius: 12px; }
+.playful-camera .skeleton-playback h3 { font-size: 17px; font-weight: 750; }
+.playful-camera .skeleton-controls { gap: 12px; }
+.playful-camera .set-results h2 { font-size: 20px; font-weight: 800; }
+.playful-camera .set-rep { border-radius: 12px; background: #fafbf4; font-size: 13px; }
+.playful-camera .set-rep span { font-size: 12px; }
+.playful-camera .level-result-backdrop { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; padding: 20px; background: transparent; color: var(--text); overflow-y: auto; }
+.playful-camera .level-result-backdrop:not([open]) { display: none; }
+.playful-camera .level-result-backdrop[open] { display: grid; place-items: center; }
+.playful-camera .level-result-backdrop::backdrop { background: #1c2b21aa; }
+.playful-camera .level-result-card { border-radius: 20px; border-bottom-width: 4px; border-color: #e6ddcb; box-shadow: 0 16px 70px #25352520; padding: 28px; }
+.playful-camera .level-result-card h2 { font-size: 26px; font-weight: 800; }
+.playful-camera .level-result-card > p { font-size: 13px; line-height: 1.65; color: #7b8570; }
+.playful-camera .level-result-icon { border-radius: 17px; }
+.playful-camera .level-score { border: 1px solid #e9dfb7; border-radius: 13px; background: #fff5d8; }
+.playful-camera .level-result-actions .button { border-radius: 11px; font-size: 12px; }
+.playful-camera .workout-count { min-height: 56px; padding: 8px 15px 8px 9px; border-radius: 15px; border-color: #e4e8d7; background: #fffaf1f5; box-shadow: 0 3px 0 #c9d6b7; }
+.playful-camera .workout-count strong { font-size: 27px; }
+.playful-camera .workout-note { width: 35px; height: 35px; border-radius: 11px; color: var(--tone); background: var(--tone-soft); }
+.playful-camera .workout-count small { font-size: 11px; }
+.playful-camera .workout-end, .playful-camera .workout-icon-button { min-height: 45px; padding: 10px 15px; border: 1px solid #ffffff8c; border-bottom-width: 3px; border-radius: 12px; color: #44543a; background: #fffaf1f5; font-size: 13px; }
+.playful-camera .workout-icon-button { width: 45px; padding: 10px; }
+.playful-camera .workout-cue { max-width: min(550px, calc(100% - 32px)); border-radius: 14px; padding: 12px 18px; background: #172a21ed; }
+.playful-camera .workout-cue strong { font-size: clamp(13px, 2vw, 16px); }
+.playful-camera .workout-cue small { font-size: 11px; }
+/* Fullscreen keeps the camera geometry and every recording control intact. */
+.playful-camera .camera-panel[data-expanded="true"]:not([data-immersive="true"]) { height: 100dvh; min-height: 0; padding: 0; grid-template: "header" auto "error" auto "level" auto "viewport" minmax(0, 1fr) "dock" auto / minmax(0, 1fr); overflow: auto; }
+.playful-camera .camera-panel[data-expanded="true"] .app-header { padding: 10px 20px; min-height: 65px; }
+.playful-camera .camera-panel[data-expanded="true"] .level-brief { margin: 8px 16px; padding: 10px 14px; }
+.playful-camera .camera-panel[data-expanded="true"]:not([data-immersive="true"]) .viewport-wrap { min-height: 220px; margin: 0; }
+.playful-camera .camera-panel[data-expanded="true"]:not([data-immersive="true"]) .camera-dock { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; padding: 12px 20px; border-radius: 0; box-shadow: none; }
+.playful-camera .camera-panel[data-expanded="true"] .session-heading, .playful-camera .camera-panel[data-expanded="true"] .capture-help, .playful-camera .camera-panel[data-expanded="true"] .camera-privacy { display: none; }
+.playful-camera .camera-panel[data-expanded="true"] .capture-mode-picker { width: 230px; }
+.playful-camera .camera-panel[data-expanded="true"] .capture-mode-picker legend { margin-bottom: 5px; }
+.playful-camera .camera-panel[data-expanded="true"] .capture-choice { min-height: 40px; padding: 9px; }
+.playful-camera .camera-panel[data-expanded="true"] .capture-choice small, .playful-camera .camera-panel[data-expanded="true"] .training-toggle small { display: none; }
+.playful-camera .camera-panel[data-expanded="true"] .camera-toggles { display: flex; gap: 18px; padding: 0; border: 0; }
+.playful-camera .camera-panel[data-expanded="true"] .training-toggle { gap: 8px; min-height: 40px; }
+.playful-camera .camera-panel[data-expanded="true"] .session-options { min-width: 140px; border: 0; }
+.playful-camera .camera-panel[data-expanded="true"] .coaching-live { flex: 1 1 100%; }
+@media (hover: hover) and (pointer: fine) {
+  .playful-camera .button-primary:enabled:hover { color: white; background: var(--blue-hover); box-shadow: none; transform: none; }
+  .playful-camera .button-secondary:enabled:hover, .playful-camera .button-stop:enabled:hover { background: #f5f7ed; }
+  .playful-camera .capture-choice:enabled:hover { border-color: #aebddd; }
+  .playful-camera .button-studio-link:hover { text-decoration: none; background: #efefff; color: var(--blue); }
+}
+@media (max-width: 1000px) {
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) { padding-inline: 20px; gap: 0 18px; grid-template-columns: minmax(0, 1fr) 290px; }
+  .playful-camera .studio-heading { gap: 19px; }
+  .playful-camera .camera-heading-copy { padding-left: 19px; }
+  .playful-camera .camera-wordmark { font-size: 16px; }
+  .playful-camera .camera-dock { padding: 18px; }
+  .playful-camera .studio-details { padding-inline: 20px; }
+}
+@media (max-width: 820px) {
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) { grid-template: "header" auto "error" auto "level" auto "viewport" auto "dock" auto / minmax(0, 1fr); }
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .viewport-wrap { height: 420px; }
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .camera-dock { margin-top: 22px; }
+  .playful-camera .studio-heading { gap: 15px; }
+  .playful-camera .camera-wordmark > strong { display: none; }
+  .playful-camera .camera-heading-copy { border: 0; padding-left: 0; }
+  .playful-camera .checklist { gap: 18px; }
+}
+@media (max-width: 520px) {
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) { padding-inline: 14px; }
+  .playful-camera .app-header { flex-wrap: wrap; gap: 12px; padding: 16px 0 13px; }
+  .playful-camera .studio-heading { flex: 1 0 100%; }
+  .playful-camera .camera-wordmark > strong { display: inline; font-size: 15px; }
+  .playful-camera .camera-wordmark { gap: 8px; }
+  .playful-camera .camera-wordmark > span { width: 32px; height: 32px; border-radius: 10px; }
+  .playful-camera .camera-heading-copy { margin-left: auto; text-align: right; }
+  .playful-camera .camera-eyebrow { font-size: 7px; }
+  .playful-camera .studio-heading h1 { font-size: 20px; }
+  .playful-camera .level-title { font-size: 10px; }
+  .playful-camera .studio-tools { width: 100%; justify-content: flex-end; }
+  .playful-camera .studio-tools .home-link { margin-right: auto; }
+  .playful-camera .level-brief { margin: 18px 0; gap: 12px; padding: 14px; flex-wrap: wrap; }
+  .playful-camera .level-brief > div { min-width: 170px; }
+  .playful-camera .level-brief strong { font-size: 15px; }
+  .playful-camera .level-brief p { font-size: 11px; }
+  .playful-camera .level-brief .button { width: 100%; }
+  .playful-camera .level-seed { width: 37px; height: 37px; }
+  .playful-camera .level-seed svg { width: 29px; height: 29px; }
+  .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .viewport-wrap { height: 350px; border-radius: 15px; }
+  .playful-camera .empty-camera { padding: 40px 16px 20px; gap: 10px; }
+  .playful-camera .empty-camera-icon { width: 52px; border-radius: 15px; margin-bottom: 3px; }
+  .playful-camera .empty-camera strong { font-size: 25px; }
+  .playful-camera .empty-camera p { max-width: 29ch; font-size: 11px; }
+  .playful-camera .empty-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 6px; }
+  .playful-camera .empty-actions .button-primary { min-width: 170px; }
+  .playful-camera .button-viewfinder-link { font-size: 10px; }
+  .playful-camera .camera-dock { padding: 20px; border-radius: 15px; }
+  .playful-camera .camera-status { font-size: 9px; inset: 12px auto auto 12px; }
+  .playful-camera .phase-pill, .playful-camera .phase-pill[data-recording="true"] { top: 42px; max-width: calc(100% - 26px); font-size: 12px; }
+  .playful-camera .example-control select { font-size: 16px; }
+  .playful-camera .studio-details { padding: 22px 14px 0; }
+  .playful-camera .setup-panel, .playful-camera .result-panel, .playful-camera .set-results { padding: 20px; border-radius: 15px; }
+  .playful-camera .setup-panel h2, .playful-camera .result-header h2 { font-size: 20px; }
+  .playful-camera .checklist { grid-template-columns: minmax(0, 1fr); margin-block: 20px; gap: 18px; }
+  .playful-camera .step-copy { font-size: 11px; }
+  .playful-camera .result-header { flex-wrap: wrap; gap: 15px; }
+  .playful-camera .result-actions { width: 100%; }
+  .playful-camera .workout-hud { padding: max(13px, env(safe-area-inset-top)) 10px; }
+  .playful-camera .workout-count { min-height: 46px; padding: 6px 10px 6px 7px; gap: 7px; border-radius: 12px; }
+  .playful-camera .workout-count strong { font-size: 23px; }
+  .playful-camera .workout-count strong span { font-size: 15px; }
+  .playful-camera .workout-note { width: 29px; height: 29px; border-radius: 9px; }
+  .playful-camera .workout-end { padding: 10px 12px; font-size: 12px; }
+  .playful-camera .workout-hud-actions { gap: 6px; }
+  .playful-camera .level-result-card { padding: 24px 20px; }
+  .playful-camera .level-result-card h2 { font-size: 23px; }
+  .playful-camera .camera-panel[data-expanded="true"] .camera-wordmark { display: none; }
+  .playful-camera .camera-panel[data-expanded="true"] .camera-heading-copy { margin-left: 0; text-align: left; }
+  .playful-camera .camera-panel[data-expanded="true"] .app-header { gap: 7px; }
+  .playful-camera .camera-panel[data-expanded="true"] .studio-heading { flex-basis: auto; }
+  .playful-camera .camera-panel[data-expanded="true"] .studio-tools { width: auto; }
+  .playful-camera .camera-panel[data-expanded="true"] .studio-tools .home-link { display: none; }
+  .playful-camera .camera-panel[data-expanded="true"] .camera-dock { gap: 9px 14px; padding: 10px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .playful-camera *, .playful-camera *::before, .playful-camera *::after { animation: none; transition: none; scroll-behavior: auto; }
+}
