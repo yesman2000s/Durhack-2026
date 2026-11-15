@@ -265,7 +265,7 @@ function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mode, setMode] = useState('off');
   const [exercise, setExercise] = useState(INITIAL_EXERCISE);
-  const [training, setTraining] = useState(true);
+  const [training, setTraining] = useState(false);
   const [guideVisible, setGuideVisible] = useState(false);
   const [variant, setVariant] = useState('bodyweight');
   const [soundEnabled, setSoundEnabled] = useState(true);
