@@ -116,8 +116,7 @@
 .compose-studio.playful-studio .clip-title > svg { width: 12px; height: 12px; }
 .compose-studio.playful-studio .clip-next { padding: 3px 4px; color: #fff; background: var(--tone); border-radius: 4px; font-size: 7px; font-weight: 800; line-height: 1; letter-spacing: .02em; }
 .compose-studio.playful-studio .clip-art { display: grid; width: 100%; height: 36px; min-height: 36px; max-height: 40px; flex: 1; color: var(--tone); opacity: .9; pointer-events: none; }
-.compose-studio.playful-studio .clip-art > .clip-note { width: 36px; height: 36px; }
-.compose-studio.playful-studio .clip-art > .clip-waveform { width: 100%; height: 6px; min-height: 6px; max-height: 6px; color: inherit; opacity: .38; }
+.compose-studio.playful-studio .clip-art > .clip-waveform { width: 100%; height: 32px; min-height: 32px; max-height: 32px; color: inherit; opacity: .78; }
 .compose-studio.playful-studio .clip-caption { font-size: 8px; font-weight: 650; opacity: .95; line-height: 1.4; }
 .compose-studio.playful-studio .arrangement-clip.available { border-style: solid; box-shadow: 0 3px 0 var(--tone-shadow); background: var(--tone-soft); }
 .compose-studio.playful-studio .arrangement-clip.locked { background: #fafbf7; border-color: #eaece3; color: #b5bbad; box-shadow: 0 3px 0 #e7e9df; }
@@ -128,7 +127,7 @@
 .compose-studio.playful-studio .arrangement-clip[data-muted=true] .clip-art { color: #9ba58b; opacity: .45; }
 .compose-studio.playful-studio .arrangement-clip[data-playing=true] { box-shadow: 0 3px 0 var(--tone-shadow), inset 0 0 0 1px var(--tone); }
 .compose-studio.playful-studio .arrangement-clip[data-playing=true] .clip-art { opacity: 1; }
-.compose-studio.playful-studio .arrangement-clip[data-playing=true] .clip-waveform { opacity: .75; }
+.compose-studio.playful-studio .arrangement-clip[data-playing=true] .clip-waveform { opacity: 1; }
 .compose-studio.playful-studio .arrangement-clip[data-dragging=true] { box-shadow: 0 3px 0 var(--tone-shadow), 0 10px 20px #4c463121; }
 .compose-studio.playful-studio .clip-drop-target { margin: 20px 5px 22px; border-radius: 11px; }
 .compose-studio.playful-studio .clip-drag { right: 1px; bottom: 0; width: 25px; height: 23px; }

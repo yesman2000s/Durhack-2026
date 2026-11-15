@@ -12,6 +12,8 @@ const levels = Array.from({ length: LEVEL_COUNT }, (_, i) => i + 1);
 const keyFor = (id, level) => `${id}:${level}`;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const soundLabel = (song, id) => ({ 'drums-low': 'Drums', 'drums-high': 'Percussion', other: 'Melody' }[partForTrack(song, id).stem] ?? partForTrack(song, id).name);
+// Decorative waveform until playback decodes this section's actual audio.
+const PREVIEW_WAVEFORM = [12, 23, 18, 30, 21, 11, 28, 20, 13, 26, 18, 30, 15, 24, 13, 22].map((height) => height / 30);
 
 function EditorIcon({ name, size = 16 }) {
   if (name === 'note') return <MusicNote size={size} />;
@@ -30,16 +32,16 @@ function EditorIcon({ name, size = 16 }) {
 }
 
 function Waveform({ bins }) {
+  const step = 128 / bins.length;
   return <svg className="clip-waveform" viewBox="0 0 128 32" preserveAspectRatio="none" aria-hidden="true">{bins.map((amplitude, i) => {
     const height = Math.max(1, amplitude * 30);
-    return <rect key={i} x={i * 4 + 1} y={(32 - height) / 2} width="2" height={height} rx="1" fill="currentColor" />;
+    return <rect key={i} x={i * step + step / 4} y={(32 - height) / 2} width={step / 2} height={height} rx="1" fill="currentColor" />;
   })}</svg>;
 }
 
 function ClipArt({ waveform }) {
   return <span className="clip-art" aria-hidden="true">
-    <MusicNote className="clip-note" size={36} />
-    {waveform && <Waveform bins={waveform} />}
+    <Waveform bins={waveform?.length ? waveform : PREVIEW_WAVEFORM} />
   </span>;
 }
 
@@ -101,7 +103,7 @@ function TimelineClip({ track, level, slot, selected, muted, playing, waveform, 
   return <div className={`arrangement-clip ${level.status}`} data-selected={selected} data-muted={muted} data-playing={playing} style={{ gridColumn: slot + 1, gridRow: 1 }}>
     <button className="clip-select" {...dragEvents} onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onSelect(); }}
       aria-pressed={selected} aria-label={`${track.name}, note ${level.level}, ${level.status}${muted ? ', muted' : ''}${playing ? ', playing' : ''}`}>
-      <span className="clip-title"><span>{String(level.level).padStart(2, '0')}</span>{level.status === 'available' ? <span className="clip-next">NEXT</span> : <EditorIcon name={muted ? 'mute' : playing ? 'volume' : unlocked ? 'check' : 'lock'} size={13} />}</span>
+      <span className="clip-title"><span className="clip-number"><MusicNote size={14} />{String(level.level).padStart(2, '0')}</span>{level.status === 'available' ? <span className="clip-next">NEXT</span> : <EditorIcon name={muted ? 'mute' : playing ? 'volume' : unlocked ? 'check' : 'lock'} size={13} />}</span>
       <ClipArt waveform={unlocked ? waveform : null} />
       <span className="clip-caption">{unlocked ? muted ? 'Muted' : playing ? 'Playing' : Number.isFinite(level.score) ? `${Math.round(level.score)} form` : 'Unlocked' : level.status === 'available' ? level.level === 1 ? '1 rep to begin' : 'Your next step' : 'Keep growing'}</span>
     </button>
