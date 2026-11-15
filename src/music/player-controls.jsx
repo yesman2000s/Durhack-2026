@@ -35,7 +35,7 @@ export function AlbumCover({ song, small = false }) {
         <circle cx="81" cy="81" r="25" fill="var(--cover-accent)" />
       </>}
     </svg>
-    {!small && <span className="cover-caption">COMPOSE / {song.genre.toUpperCase()}</span>}
+    {!small && <span className="cover-caption">MOTIF / {song.genre.toUpperCase()}</span>}
   </div>;
 }
 

@@ -37,7 +37,7 @@ test('native controls follow the latest playback state and seek within the unloc
   f.state.status = 'paused'; f.state.previewKey = 'push-up:3'; f.state.duration = 8; f.state.elapsed = 1;
   f.media.update();
   assert.equal(f.session.playbackState, 'paused');
-  assert.equal(f.session.metadata.album, 'Compose · Note 3 preview');
+  assert.equal(f.session.metadata.album, 'Motif · Note 3 preview');
 });
 
 test('ending the player clears metadata and handlers; stale native actions cannot restart it', () => {

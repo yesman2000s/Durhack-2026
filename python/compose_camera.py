@@ -1,4 +1,4 @@
-"""Run the COMPOSE side-view movement camera as a local desktop app."""
+"""Run the Motif side-view movement camera as a local desktop app."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from movement_guides import (
 
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "public" / "models" / "pose_landmarker_lite.task"
-WINDOW = "COMPOSE - Movement Camera"
+WINDOW = "Motif - Movement Camera"
 PREVIEW_CROP_WIDTH_PER_HEIGHT = 0.95
 POSE_CROP_WIDTH_PER_HEIGHT = 1.25
 CENTERED_BODY_MARGIN = 0.08
@@ -621,7 +621,7 @@ class CaptureSession:
             return
         try:
             self.output.mkdir(parents=True, exist_ok=True)
-            path = self.output / f"compose-{self.latest['exercise']}-{self.latest['id']}.json"
+            path = self.output / f"motif-{self.latest['exercise']}-{self.latest['id']}.json"
             path.write_text(json.dumps(self.latest, indent=2, allow_nan=False), encoding="utf-8")
         except (OSError, ValueError) as error:
             self.notice = "Could not save the rep. Check the output folder."
@@ -1281,7 +1281,7 @@ def make_preview(frame: np.ndarray, landmarks, session: CaptureSession, timestam
     panel_x = preview_width + 24
     exercise = EXERCISES[session.exercise]
     squat = session.exercise == "squat"
-    draw_text(display, "COMPOSE", panel_x, 32, 0.57, ACCENT, 1)
+    draw_text(display, "Motif", panel_x, 32, 0.57, ACCENT, 1)
     title = f"{exercise['title']} camera" if squat else exercise["title"]
     draw_text(display, title, panel_x, 68, 0.89 if squat else 0.62, INK, 2)
     detail = session.variant.upper() if squat else "SIDE VIEW"

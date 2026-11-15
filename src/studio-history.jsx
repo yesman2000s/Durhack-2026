@@ -153,7 +153,7 @@ export function AttemptViewer({ user, attempt, onClose }) {
   function download() {
     if (!videoUrl) return;
     const link = document.createElement('a'); link.href = videoUrl;
-    link.download = `compose-${attempt.exerciseId}-note-${attempt.level}.${local.video.type.includes('mp4') ? 'mp4' : 'webm'}`;
+    link.download = `motif-${attempt.exerciseId}-note-${attempt.level}.${local.video.type.includes('mp4') ? 'mp4' : 'webm'}`;
     link.click();
   }
   function backdropClick(event) {

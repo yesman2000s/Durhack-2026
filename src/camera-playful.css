@@ -42,8 +42,7 @@
 }
 .playful-camera .app-header { min-height: 88px; padding: 18px 0; gap: 24px; border-color: var(--line); }
 .playful-camera .studio-heading { gap: 32px; }
-.playful-camera .camera-wordmark { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; color: var(--text); font-size: 19px; font-weight: 850; letter-spacing: -.04em; text-decoration: none; }
-.playful-camera .camera-wordmark > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: white; background: var(--blue); box-shadow: 0 3px 0 var(--blue-hover); }
+.playful-camera .camera-wordmark { display: inline-flex; align-items: center; min-height: 36px; flex-shrink: 0; color: #205b35; font-size: 24px; font-weight: 800; letter-spacing: -.045em; text-decoration: none; }
 .playful-camera .camera-heading-copy { padding-left: 28px; border-left: 1px solid var(--line); }
 .playful-camera .camera-eyebrow { display: block; color: #7d8574; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
 .playful-camera .studio-heading h1 { margin-top: 6px; font-size: 23px; font-weight: 800; letter-spacing: -.04em; }
@@ -209,7 +208,6 @@
   .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .viewport-wrap { height: 420px; }
   .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) .camera-dock { margin-top: 22px; }
   .playful-camera .studio-heading { gap: 15px; }
-  .playful-camera .camera-wordmark > strong { display: none; }
   .playful-camera .camera-heading-copy { border: 0; padding-left: 0; }
   .playful-camera .checklist { gap: 18px; }
 }
@@ -217,9 +215,7 @@
   .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) { padding-inline: 14px; }
   .playful-camera .app-header { flex-wrap: wrap; gap: 12px; padding: 16px 0 13px; }
   .playful-camera .studio-heading { flex: 1 0 100%; }
-  .playful-camera .camera-wordmark > strong { display: inline; font-size: 15px; }
-  .playful-camera .camera-wordmark { gap: 8px; }
-  .playful-camera .camera-wordmark > span { width: 32px; height: 32px; border-radius: 10px; }
+  .playful-camera .camera-wordmark { font-size: 22px; }
   .playful-camera .camera-heading-copy { margin-left: auto; text-align: right; }
   .playful-camera .camera-eyebrow { font-size: 7px; }
   .playful-camera .studio-heading h1 { font-size: 20px; }

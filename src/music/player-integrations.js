@@ -39,7 +39,7 @@ export function connectMediaSession(session, Metadata, getState) {
     if (key !== metadataKey && Metadata) {
       try {
         session.metadata = new Metadata({ title: state.song.title, artist: 'Kevin MacLeod',
-          album: state.previewKey ? `Compose · Note ${state.previewKey.split(':')[1]} preview` : 'Compose · Your movement mix' });
+          album: state.previewKey ? `Motif · Note ${state.previewKey.split(':')[1]} preview` : 'Motif · Your movement mix' });
         metadataKey = key;
       } catch { /* Older implementations can expose incomplete metadata support. */ }
     }

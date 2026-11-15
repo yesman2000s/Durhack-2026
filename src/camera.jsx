@@ -505,7 +505,7 @@ function App() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `compose-set-${session.id.slice(0, 8)}.json`;
+    link.download = `motif-set-${session.id.slice(0, 8)}.json`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -1256,7 +1256,7 @@ function App() {
           }} />
           <header className="app-header">
             <div className="studio-heading">
-              <a className="camera-wordmark" href="/" aria-label="Compose home"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 14h4l3-8 4 13 3-8 2 3h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span><strong>COMPOSE</strong></a>
+              <a className="camera-wordmark" href="/" aria-label="Motif home">Motif</a>
               <div className="camera-heading-copy"><span className="camera-eyebrow">MAKE YOUR NEXT NOTE</span><h1 id="studio-title">{selectedExercise.title} <span className="level-title">{visibleTarget?.practice ? 'Practice' : `Level ${levelAttempt.current?.level ?? selectedLevel.level ?? REQUESTED_LEVEL ?? 1}`}</span></h1></div>
             </div>
             <div className="studio-tools">

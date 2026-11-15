@@ -112,7 +112,7 @@ export function downloadEvidence(evidence) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `compose-${evidence.exercise ?? 'squat'}-${evidence.id.slice(0, 8)}.json`;
+  link.download = `motif-${evidence.exercise ?? 'squat'}-${evidence.id.slice(0, 8)}.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -16,8 +16,7 @@
 .compose-studio.playful-studio .tone-gold { --tone: #a17e37; --tone-soft: #fff4d8; --tone-border: #efe1bb; --tone-fill: #fff4d8; --tone-shadow: #e1d09a; }
 .compose-studio.playful-studio .tone-sage { --tone: #7c9357; --tone-soft: #eff5e4; --tone-border: #dce6cb; --tone-fill: #eff5e4; --tone-shadow: #c3d2aa; }
 .compose-studio.playful-studio .studio-header { min-height: 66px; padding-inline: max(24px, calc((100vw - 1392px) / 2)); gap: 36px; background: var(--page); border-color: var(--line); }
-.compose-studio.playful-studio .studio-brand { font-size: 20px; font-weight: 850; gap: 10px; letter-spacing: -.04em; color: #205b35; }
-.compose-studio.playful-studio .studio-brand > span { width: 34px; height: 34px; border-radius: 10px; }
+.compose-studio.playful-studio .studio-brand { min-height: 36px; font-size: 24px; font-weight: 800; letter-spacing: -.045em; color: #205b35; }
 .compose-studio.playful-studio .studio-header nav { align-items: center; gap: 7px; margin-left: auto; margin-right: 0; }
 .compose-studio.playful-studio .studio-header nav button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 9px 14px; border-radius: 9px; font-size: 13px; font-weight: 650; }
 .compose-studio.playful-studio .studio-header nav button.current { color: #fff; background: var(--blue); }
@@ -60,7 +59,7 @@
 }
 @media (max-width:760px) {
   .compose-studio.playful-studio .studio-header { gap: 16px; padding-inline: 16px; }
-  .compose-studio.playful-studio .studio-brand { font-size: 17px; }
+  .compose-studio.playful-studio .studio-brand { font-size: 22px; }
   .compose-studio.playful-studio .studio-header nav button { padding-inline: 10px; font-size: 12px; }
 }
 @media (max-width:480px) {

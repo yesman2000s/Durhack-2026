@@ -1,6 +1,6 @@
-# Durhack-2026 · COMPOSE mobility camera
+# Durhack-2026 · Motif movement studio
 
-COMPOSE turns exercise progress into music. The browser app combines account-backed workout history, seven levels for each of four movements, a music studio, and a side-view camera with automatic Gemini feedback and optional ElevenLabs speech. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. A standalone Python tool provides capture, tracking, and JSON export.
+Motif turns exercise progress into music. The browser app combines account-backed workout history, seven levels for each of four movements, a music studio, and a side-view camera with automatic Gemini feedback and optional ElevenLabs speech. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. A standalone Python tool provides capture, tracking, and JSON export.
 
 The browser has two pages: `index.html` is the music studio, account entry point, and practice library; `camera.html` captures the next available movement level. Choose **Unlock note N** beside an instrument, or select its available note, to review the exact goal, then choose **Start exercise** to open its workout. Completed notes can be previewed or muted in the studio. **Back to music** returns from the camera.
 

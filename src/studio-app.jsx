@@ -98,7 +98,7 @@ function AuthDialog({ onClose, onSuccess }) {
       {error && <p className="form-error" role="alert">{error}</p>}
       <button className="raised-button primary auth-submit" disabled={busy}>{busy ? 'One moment…' : register ? 'Create account' : 'Sign in'}<Icon name="arrow" /></button>
     </form>
-    <button className="plain-button auth-switch" onClick={() => { setRegister(!register); setError(''); }} disabled={busy}>{register ? 'Already have an account? Sign in' : 'New to Compose? Create an account'}</button>
+    <button className="plain-button auth-switch" onClick={() => { setRegister(!register); setError(''); }} disabled={busy}>{register ? 'Already have an account? Sign in' : 'New to Motif? Create an account'}</button>
     <small>Scores are saved to your account. Recordings stay on this device.</small>
   </Dialog>;
 }
@@ -219,7 +219,7 @@ function StudioApp() {
   }
 
   return <div className="compose-studio playful-studio">
-    <header className="studio-header"><a className="studio-brand" href="/" aria-label="Compose home"><span><svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M3 14h4l3-8 4 13 3-8 2 3h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span> COMPOSE</a>
+    <header className="studio-header"><a className="studio-brand" href="/" aria-label="Motif home">Motif</a>
       <nav aria-label="Main navigation"><button className={tab === 'studio' ? 'current' : ''} aria-current={tab === 'studio' ? 'page' : undefined} onClick={() => setTab('studio')}><Icon name="note" size={18} /> My studio</button><button className={tab === 'history' ? 'current' : ''} aria-current={tab === 'history' ? 'page' : undefined} onClick={() => setTab('history')}><Icon name="history" size={18} /> My attempts</button></nav>
       <div className="header-account">{user ? <><span className="user-avatar" aria-hidden="true">{user.name?.slice(0, 1).toUpperCase()}</span><span className="user-name">{user.name}</span><button className="plain-button" onClick={signOut}>Sign out</button></> : <button className="raised-button small" onClick={() => setAuthOpen(true)}><Icon name="user" size={17} /> Sign in</button>}</div>
     </header>

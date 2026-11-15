@@ -33,7 +33,7 @@ export function createLocalAttemptVault({ indexedDB = globalThis.indexedDB, now 
       request.onerror = () => { settled = true; reject(storageError(request.error)); };
       request.onblocked = () => {
         settled = true;
-        reject(new Error('Close other Compose tabs, then retry saving the local recording.'));
+        reject(new Error('Close other Motif tabs, then retry saving the local recording.'));
       };
       request.onsuccess = () => {
         const database = request.result;
