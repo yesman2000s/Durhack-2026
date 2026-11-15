@@ -89,7 +89,7 @@ The JPEGs may identify the person in the recording. Pose tracking runs locally. 
 
 ## Coach each rep with Gemini
 
-Copy `.env.example` to the ignored `.env.local` file and fill in `GEMINI_API_KEY` and `ELEVENLABS_API_KEY`, or set them as server environment variables. Do not prefix these keys with `VITE_`. The default model is [Gemini 3.6 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash). Set `GEMINI_MODEL` to use another compatible Gemini 3 model supporting image input, structured output and low thinking. Restart Vite after changing the configuration.
+For a new checkout, copy `.env.example` to the ignored `.env.local` file and set `GEMINI_API_KEY`. If `.env.local` already exists, update it without overwriting its other credentials. Connect ElevenLabs using the onboarding command below, or supply `ELEVENLABS_API_KEY` as a server environment variable. Do not prefix these keys with `VITE_`. The default model is [Gemini 3.6 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash). Set `GEMINI_MODEL` to use another compatible Gemini 3 model supporting image input, structured output and low thinking. Restart Vite after changing the configuration.
 
 Run `npm.cmd run dev`, capture any supported exercise or use **Try simulated example**. Every completed rep automatically enters the review queue. Gemini receives all captured phase JPEGs and pose metadata, confidence values, the timestamped motion trace, metrics, reference, practice guide and up to five recent rep summaries with available feedback. Exercise-specific prompts ask for evidence-based improvements for the next rep, allow natural body proportions and modest camera angles, and treat uncertain tracking as uncertainty rather than poor form. Simulated inputs are identified as examples. The prompt and rubrics live in [server/form-scoring.js](server/form-scoring.js).
 
@@ -111,7 +111,13 @@ When Gemini needs clearer evidence, `score` is `null` and it can return one film
 
 ## Hear the feedback
 
-Add `ELEVENLABS_API_KEY=<your key>` to `.env.local` and restart Vite. The default voice is George using [Eleven Flash v2.5](https://elevenlabs.io/docs/overview/models/). Set `ELEVENLABS_VOICE_ID` to select another voice. **Spoken feedback** starts enabled and can be muted during capture. The rep number, summary and tips play when analysis completes. If the browser blocks autoplay, choose **Play coaching audio**.
+Run the official onboarding command from the project directory and follow its account authorization steps:
+
+```powershell
+npx -y @elevenlabs/cli@latest onboard init
+```
+
+The CLI saves `ELEVENLABS_API_KEY` in the ignored `.env.local` file. The server uses the official `@elevenlabs/elevenlabs-js` SDK, with credentials loaded by Vite's server configuration; the browser never receives the key. Restart Vite after setup. The default voice is George using [Eleven Flash v2.5](https://elevenlabs.io/docs/overview/models/). Set `ELEVENLABS_VOICE_ID` to select another voice. **Spoken feedback** starts enabled and can be muted during capture. The rep number, summary and tips play when analysis completes. If the browser blocks autoplay, choose **Play coaching audio**.
 
 Speech never overlaps. If reviews arrive faster than they can be spoken, the next audio uses the newest feedback and older unsounded cues are skipped; all written reviews remain available. `POST /api/form-speech` accepts the `{score, summary, tips}` returned by `/api/form-score`, plus optional `repNumber`, and responds with `audio/mpeg`. The legacy `{score, tips}` payload remains supported. ElevenLabs receives only the narration text.
 

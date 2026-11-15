@@ -1,10 +1,12 @@
+import { Readable } from 'node:stream';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { normalizeFeedback } from './feedback.js';
 import { HttpError, jsonRoute } from './json-route.js';
 
 const defaultVoice = 'JBFqnCBsd6RMkjVDRZzb';
 
 export function feedbackSpeechRoute({
-  apiKey, voiceId = defaultVoice, fetchImpl = globalThis.fetch,
+  apiKey, voiceId = defaultVoice, client = apiKey ? new ElevenLabsClient({ apiKey }) : undefined,
 } = {}) {
   return jsonRoute({
     path: '/api/form-speech',
@@ -26,21 +28,29 @@ export function feedbackSpeechRoute({
     const sentence = (text) => /[.!?]$/.test(text) ? text : `${text}.`;
     const narration = [input.repNumber ? `Rep ${input.repNumber}.` : null, intro, ...feedback.tips]
       .filter(Boolean).map(sentence).join(' ');
-    const response = await fetchImpl(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
-      {
-        method: 'POST',
-        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-        body: JSON.stringify({ text: narration, model_id: 'eleven_flash_v2_5' }),
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000),
-      },
-    );
-    if (response.status === 429) throw new HttpError(429, 'Feedback audio is busy. Try again shortly.');
-    if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'audio/mpeg') {
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+    try {
+      const { data: audio, rawResponse } = await client.textToSpeech.convert(voiceId, {
+        text: narration, modelId: 'eleven_flash_v2_5', outputFormat: 'mp3_44100_128',
+      }, {
+        abortSignal: requestSignal, timeoutInSeconds: 20, maxRetries: 0,
+      }).withRawResponse();
+      if (rawResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'audio/mpeg') {
+        await audio.cancel();
+        throw new HttpError(502, 'ElevenLabs could not generate feedback audio.');
+      }
+      // Keep the deadline and disconnect signal active while consuming the body.
+      const chunks = [];
+      for await (const chunk of Readable.fromWeb(audio, { signal: requestSignal })) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      if (!body.length) throw new HttpError(502, 'ElevenLabs returned empty audio. Try again.');
+      return { contentType: 'audio/mpeg', body };
+    } catch (error) {
+      if (requestSignal.aborted) throw requestSignal.reason;
+      if (error?.statusCode === 429) throw new HttpError(429, 'Feedback audio is busy. Try again shortly.');
+      if (error?.name === 'ElevenLabsTimeoutError') throw new HttpError(504, 'ElevenLabs took too long. Try again.');
+      if (error instanceof HttpError) throw error;
       throw new HttpError(502, 'ElevenLabs could not generate feedback audio.');
     }
-    const body = Buffer.from(await response.arrayBuffer());
-    if (!body.length) throw new HttpError(502, 'ElevenLabs returned empty audio. Try again.');
-    return { contentType: 'audio/mpeg', body };
   });
 }
