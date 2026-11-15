@@ -1,8 +1,8 @@
 /* The camera belongs to the same warm, playful studio as the music editor. */
 .playful-camera {
-  --blue: #1946e8;
-  --blue-hover: #143bd2;
-  --blue-soft: #eef1ff;
+  --blue: #27834a;
+  --blue-hover: #1c683a;
+  --blue-soft: #e8f3e8;
   --mint: #779b52;
   --text: #29332d;
   --muted: #707969;
@@ -25,7 +25,7 @@
 .playful-camera :is(button, a, input, select, summary) { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .playful-camera :focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
 .playful-camera .button, .playful-camera .button-link { min-height: 44px; padding: 10px 15px; border-radius: 11px; font-size: 13px; font-weight: 750; text-decoration: none; transition: transform 120ms var(--ease-out); }
-.playful-camera .button-primary { color: #fff; background: var(--blue); border: 1px solid #1536b9; border-bottom-width: 4px; box-shadow: none; transform: none; }
+.playful-camera .button-primary { color: #fff; background: var(--blue); border: 1px solid var(--blue-hover); border-bottom-width: 4px; box-shadow: none; transform: none; }
 .playful-camera .button-secondary, .playful-camera .button-stop { color: #616d59; background: #fffefb; border: 1px solid var(--line-strong); border-bottom-width: 3px; box-shadow: none; }
 .playful-camera .button:active:enabled:not(:focus-visible) { transform: scale(.97); }
 .playful-camera .button-link, .playful-camera .text-button { color: var(--blue); }
@@ -43,14 +43,14 @@
 .playful-camera .app-header { min-height: 88px; padding: 18px 0; gap: 24px; border-color: var(--line); }
 .playful-camera .studio-heading { gap: 32px; }
 .playful-camera .camera-wordmark { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; color: var(--text); font-size: 19px; font-weight: 850; letter-spacing: -.04em; text-decoration: none; }
-.playful-camera .camera-wordmark > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: white; background: var(--blue); box-shadow: 0 3px 0 #1536b9; }
+.playful-camera .camera-wordmark > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: white; background: var(--blue); box-shadow: 0 3px 0 var(--blue-hover); }
 .playful-camera .camera-heading-copy { padding-left: 28px; border-left: 1px solid var(--line); }
 .playful-camera .camera-eyebrow { display: block; color: #7d8574; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
 .playful-camera .studio-heading h1 { margin-top: 6px; font-size: 23px; font-weight: 800; letter-spacing: -.04em; }
 .playful-camera .level-title { display: inline-block; margin-left: 5px; color: var(--tone); font-size: 12px; font-weight: 700; letter-spacing: 0; }
 .playful-camera .studio-tools { gap: 8px; }
 .playful-camera .button-studio-link { min-height: 40px; padding: 8px 10px; color: #737b6c; font-size: 11px; border-radius: 9px; white-space: nowrap; }
-.playful-camera .home-link { color: var(--blue); background: #efefff; }
+.playful-camera .home-link { color: var(--blue); background: var(--blue-soft); }
 .playful-camera .fullscreen-button { border: 1px solid var(--line); background: #fffefb; }
 .playful-camera .fullscreen-button .fullscreen-label { display: none; }
 .playful-camera .level-brief { margin: 23px 0; padding: 17px 20px; gap: 15px; border: 1px solid var(--tone-border); border-radius: 15px; background: var(--tone-soft); box-shadow: 0 3px 0 var(--tone-shadow); }
@@ -72,7 +72,7 @@
 .playful-camera .viewport[data-idle="true"] { background-image: radial-gradient(#dfe5d4 1px, transparent 1px); background-size: 24px 24px; }
 .playful-camera .frame-guide[data-idle="true"] { --corner: #d0dcc2; --mark: 30px; --stroke: 3px; inset: 23px; filter: none; }
 .playful-camera .empty-camera { width: min(100%, 470px); gap: 12px; padding: 40px 24px 28px; }
-.playful-camera .empty-camera-icon { width: 66px; border-radius: 19px; border: 1px solid #dfe4f8; background: #edf0ff; color: var(--blue); box-shadow: 0 4px 0 #d2dbf8; margin-bottom: 7px; }
+.playful-camera .empty-camera-icon { width: 66px; border-radius: 19px; border: 1px solid #d3e5d7; background: var(--blue-soft); color: var(--blue); box-shadow: 0 4px 0 #c6dfce; margin-bottom: 7px; }
 .playful-camera .empty-camera strong { color: #303b2f; font-size: clamp(25px, 2.4vw, 31px); font-weight: 800; letter-spacing: -.045em; }
 .playful-camera .empty-camera p { max-width: 34ch; color: #75806c; font-size: 13px; line-height: 1.6; }
 .playful-camera .empty-actions { margin-top: 10px; gap: 9px 12px; }
@@ -91,7 +91,7 @@
 .playful-camera .capture-choice { min-height: 70px; padding: 12px 8px; border: 1px solid #e4e4da; border-bottom-width: 3px; border-radius: 11px; color: #6b765e; background: #fff; text-align: center; }
 .playful-camera .capture-choice strong { display: block; font-size: 13px; font-weight: 750; }
 .playful-camera .capture-choice small { display: block; margin-top: 6px; font-size: 9px; font-weight: 400; }
-.playful-camera .capture-choice[aria-pressed="true"] { color: var(--blue); background: #eff2ff; border-color: #b8c8ff; }
+.playful-camera .capture-choice[aria-pressed="true"] { color: var(--blue); background: var(--blue-soft); border-color: #abd0b6; }
 .playful-camera .capture-choice:disabled { opacity: .5; cursor: default; }
 .playful-camera .capture-help { margin-top: 10px; color: #8a927f; font-size: 10px; line-height: 1.6; }
 .playful-camera .camera-toggles { display: grid; gap: 0; border-top: 1px solid var(--line); padding-top: 5px; }
@@ -193,8 +193,8 @@
 @media (hover: hover) and (pointer: fine) {
   .playful-camera .button-primary:enabled:hover { color: white; background: var(--blue-hover); box-shadow: none; transform: none; }
   .playful-camera .button-secondary:enabled:hover, .playful-camera .button-stop:enabled:hover { background: #f5f7ed; }
-  .playful-camera .capture-choice:enabled:hover { border-color: #aebddd; }
-  .playful-camera .button-studio-link:hover { text-decoration: none; background: #efefff; color: var(--blue); }
+  .playful-camera .capture-choice:enabled:hover { border-color: #96bca0; }
+  .playful-camera .button-studio-link:hover { text-decoration: none; background: var(--blue-soft); color: var(--blue); }
 }
 @media (max-width: 1000px) {
   .playful-camera .camera-panel:not([data-expanded="true"]):not([data-immersive="true"]) { padding-inline: 20px; gap: 0 18px; grid-template-columns: minmax(0, 1fr) 290px; }

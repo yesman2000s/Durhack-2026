@@ -1,10 +1,12 @@
-/* Compose's original playful palette, applied to the working music editor. */
+/* The studio is a working mixer. Colour belongs to the instruments. */
 .compose-studio.playful-studio {
   --page: #fffaf1;
-  --line: #eae4d8;
+  --line: #e6e8df;
   --text: #29332d;
-  --muted: #7b8173;
-  --blue: #1946e8;
+  --muted: #657163;
+  --blue: #27834a;
+  --blue-hover: #1c683a;
+  --blue-soft: #e8f3e8;
   min-height: 100dvh;
   color: var(--text);
   background: var(--page);
@@ -13,34 +15,65 @@
 .compose-studio.playful-studio .tone-sky { --tone: #527ca8; --tone-soft: #eaf3ff; --tone-border: #d3e0f0; --tone-fill: #eaf3ff; --tone-shadow: #b9cde1; }
 .compose-studio.playful-studio .tone-gold { --tone: #a17e37; --tone-soft: #fff4d8; --tone-border: #efe1bb; --tone-fill: #fff4d8; --tone-shadow: #e1d09a; }
 .compose-studio.playful-studio .tone-sage { --tone: #7c9357; --tone-soft: #eff5e4; --tone-border: #dce6cb; --tone-fill: #eff5e4; --tone-shadow: #c3d2aa; }
-.compose-studio.playful-studio .studio-header { min-height: 80px; padding-inline: max(28px, calc((100vw - 1280px) / 2)); gap: 65px; background: #fffaf1; border-color: var(--line); }
-.compose-studio.playful-studio .studio-brand { font-size: 20px; font-weight: 850; gap: 12px; letter-spacing: -.04em; }
-.compose-studio.playful-studio .studio-brand > span { width: 38px; height: 38px; border-radius: 12px; box-shadow: 0 3px 0 #1636b7; }
-.compose-studio.playful-studio .studio-header nav { align-items: center; gap: 10px; }
-.compose-studio.playful-studio .studio-header nav button { display: inline-flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 15px; border-radius: 10px; font-size: 13px; font-weight: 750; }
-.compose-studio.playful-studio .studio-header nav button.current { color: var(--blue); background: #efefff; }
+.compose-studio.playful-studio .studio-header { min-height: 66px; padding-inline: max(24px, calc((100vw - 1392px) / 2)); gap: 36px; background: var(--page); border-color: var(--line); }
+.compose-studio.playful-studio .studio-brand { font-size: 20px; font-weight: 850; gap: 10px; letter-spacing: -.04em; color: #205b35; }
+.compose-studio.playful-studio .studio-brand > span { width: 34px; height: 34px; border-radius: 10px; }
+.compose-studio.playful-studio .studio-header nav { align-items: center; gap: 7px; margin-left: auto; margin-right: 0; }
+.compose-studio.playful-studio .studio-header nav button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 9px 14px; border-radius: 9px; font-size: 13px; font-weight: 650; }
+.compose-studio.playful-studio .studio-header nav button.current { color: #fff; background: var(--blue); }
 .compose-studio.playful-studio .studio-header nav button.current::after { content: none; }
 .compose-studio.playful-studio .header-account { font-size: 12px; }
-.compose-studio.playful-studio .user-avatar { width: 33px; height: 33px; background: #e9edcc; }
-.compose-studio.playful-studio .studio-main { max-width: 1320px; padding: 38px 28px 155px; }
-.compose-studio.playful-studio .raised-button { min-height: 44px; padding: 11px 18px 10px; border-radius: 12px; border-color: #e7dfd2; border-bottom-width: 4px; font-size: 13px; font-weight: 750; }
-.compose-studio.playful-studio .raised-button.primary { background: var(--blue); border-color: #1536b9; }
-.compose-studio.playful-studio .raised-button.small { min-height: 37px; padding: 8px 13px 7px; font-size: 12px; }
-.compose-studio.playful-studio .eyebrow { font-size: 10px; font-weight: 800; letter-spacing: .12em; }
-.compose-studio.playful-studio .journey-intro { display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-bottom: 32px; }
-.compose-studio.playful-studio .journey-intro h1 { margin-top: 12px; font-size: clamp(31px, 3.2vw, 42px); font-weight: 850; letter-spacing: -.055em; line-height: 1.08; }
-.compose-studio.playful-studio .journey-intro p { margin-top: 12px; color: var(--muted); font-size: 14px; line-height: 1.5; }
-.compose-studio.playful-studio .journey-progress { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 7px 14px; flex-shrink: 0; width: 200px; min-height: 89px; padding: 17px 23px; border: 1px solid #efe5c4; border-radius: 16px; background: #fff7db; box-shadow: 0 4px 0 #e9dfbd; font-variant-numeric: tabular-nums; }
-.compose-studio.playful-studio .journey-progress > svg { grid-column: 1; grid-row: 1; width: 27px; height: 27px; color: #b59a45; }
-.compose-studio.playful-studio .journey-progress > div { grid-column: 2; min-width: 0; color: #9a9378; font-size: 12px; }
-.compose-studio.playful-studio .journey-progress strong { margin-right: 4px; color: #344032; font-size: 25px; line-height: 1; font-weight: 800; }
-.compose-studio.playful-studio .journey-progress strong small { color: #999174; font-size: 12px; font-weight: 650; }
-.compose-studio.playful-studio .journey-progress > span, .compose-studio.playful-studio .journey-progress > div > span { display: block; margin-top: 5px; color: #8d886c; font-size: 10px; font-weight: 650; }
-.compose-studio.playful-studio .journey-progress > span { grid-column: 2; }
-.compose-studio.playful-studio .journey-progress progress { display: block; grid-column: 2; width: 100%; height: 6px; margin-top: 3px; overflow: hidden; appearance: none; border: 0; border-radius: 8px; background: #ece2b8; }
-.compose-studio.playful-studio .journey-progress progress::-webkit-progress-bar { background: #ece2b8; border-radius: 8px; }
-.compose-studio.playful-studio .journey-progress progress::-webkit-progress-value { background: #c1a543; border-radius: 8px; }
-.compose-studio.playful-studio .journey-progress progress::-moz-progress-bar { background: #c1a543; border-radius: 8px; }
+.compose-studio.playful-studio .user-avatar { background: var(--blue-soft); color: var(--blue-hover); }
+.compose-studio.playful-studio .studio-main { max-width: 1440px; padding: 20px 24px 130px; }
+.compose-studio.playful-studio .raised-button { min-height: 42px; padding: 10px 17px; border-radius: 9px; border-color: #d5dfd3; border-bottom-width: 2px; font-size: 13px; font-weight: 700; }
+.compose-studio.playful-studio .raised-button.primary { background: var(--blue); border-color: var(--blue-hover); }
+.compose-studio.playful-studio .raised-button.small { min-height: 36px; padding: 7px 13px; font-size: 12px; }
+/* A normal, flowing page with small, tactile lesson paths. */
+.studio-workspace.arrangement-workspace { display: block; }
+.compose-studio.playful-studio .studio-main { max-width: 1120px; padding: 30px 24px 40px; }
+.compose-studio.playful-studio .studio-header { background: #fffdf8; }
+.compose-studio.playful-studio .studio-header nav button.current { color: var(--blue-hover); background: var(--blue-soft); box-shadow: inset 0 -3px 0 #c7dfc5; }
+.studio-mixbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.studio-mix-heading h1 { font-size: 30px; font-weight: 800; letter-spacing: -.04em; }
+.studio-mix-heading p { margin-top: 6px; color: var(--muted); font-size: 13px; }
+.studio-mix-controls { display: flex; align-items: center; gap: 18px; }
+.studio-note-count { font-size: 12px; color: var(--muted); }
+.studio-note-count strong { color: var(--blue-hover); font-weight: 750; }
+.studio-genre { font-size: 0; }
+.studio-genre select { min-height: 40px; padding: 8px 28px 8px 12px; background: white; color: var(--text); border: 2px solid var(--line); border-radius: 12px; font-size: 13px; font-weight: 650; }
+.mini-player { display: flex; align-items: center; gap: 15px; max-width: 360px; margin: 22px 0 28px; }
+.mini-play { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; color: white; background: var(--blue); border: 0; border-radius: 15px; box-shadow: 0 4px 0 var(--blue-hover); }
+.mini-play:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--blue-hover); }
+.mini-player input { flex: 1; min-width: 0; height: 30px; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+.mini-player input::-webkit-slider-runnable-track { height: 7px; border-radius: 10px; background: linear-gradient(to right,var(--blue) var(--range-fill),#e2e8dc var(--range-fill)); }
+.mini-player input::-webkit-slider-thumb { appearance: none; width: 13px; height: 13px; margin-top: -3px; border-radius: 50%; background: var(--blue); }
+.mini-player input::-moz-range-track { height: 7px; border-radius: 10px; background: #e2e8dc; }
+.mini-player input::-moz-range-progress { height: 7px; border-radius: 10px; background: var(--blue); }
+.mini-player input::-moz-range-thumb { width: 13px; height: 13px; border: 0; border-radius: 50%; background: var(--blue); }
+.mini-player input:disabled { opacity: .5; cursor: default; }
+.studio-music-notice { margin-top: 18px; font-size: 12px; color: var(--muted); }
+.compose-studio.playful-studio .studio-dialog { border-radius: 22px; background: #fffaf1; border: 2px solid #e1e5d9; }
+.compose-studio.playful-studio .studio-dialog h2 { font-weight: 800; }
+.compose-studio.playful-studio .auth-emblem { color: var(--blue); background: var(--blue-soft); }
+@media (hover:hover) and (pointer:fine) {
+  .compose-studio.playful-studio .raised-button.primary:hover:not(:disabled) { background: var(--blue-hover); }
+}
+@media (max-width:760px) {
+  .compose-studio.playful-studio .studio-header { gap: 16px; padding-inline: 16px; }
+  .compose-studio.playful-studio .studio-brand { font-size: 17px; }
+  .compose-studio.playful-studio .studio-header nav button { padding-inline: 10px; font-size: 12px; }
+}
+@media (max-width:480px) {
+  .compose-studio.playful-studio .studio-main { padding: 22px 16px 36px; }
+  .compose-studio.playful-studio .studio-header nav { margin-inline: -16px; padding-inline: 16px; flex-basis: calc(100% + 32px); height: 46px; }
+  .compose-studio.playful-studio .studio-header nav button { min-height: 34px; padding-block: 6px; }
+  .studio-mix-controls { width: 100%; justify-content: space-between; }
+  .studio-genre select { font-size: 16px; }
+  .studio-mix-heading h1 { font-size: 27px; }
+  .mini-player { max-width: none; margin-block: 18px 24px; }
+}
+
+/* Original illustrated instrument timeline and raised waveform notes. */
 .compose-studio.playful-studio .arrangement-editor { --track-label-width: 208px; border-radius: 18px; border-color: #e9e5da; background: #fff; box-shadow: 0 5px 0 #eee6d8; }
 .compose-studio.playful-studio .journey-mixbar { display: flex; align-items: center; justify-content: space-between; gap: 22px; min-height: 82px; padding: 18px 23px; }
 .compose-studio.playful-studio .journey-mix-heading { display: flex; align-items: center; gap: 13px; min-width: 0; }
@@ -105,136 +138,33 @@
 .compose-studio.playful-studio .legend-next { background: #ca7757; }
 .compose-studio.playful-studio .legend-unlocked { background: #7c9658; }
 .compose-studio.playful-studio .arrangement-footer > span { margin-left: auto; text-align: right; font-size: 9px; }
-.compose-studio.playful-studio .journey-music-notice { margin-top: 15px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.compose-studio.playful-studio .journey-next { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: center; gap: 28px; margin-top: 38px; padding: 25px 28px; border: 1px solid var(--tone-border); border-radius: 17px; background: var(--tone-soft); box-shadow: 0 4px 0 var(--tone-shadow); }
-.compose-studio.playful-studio .journey-next-art { display: grid; justify-items: center; gap: 7px; min-width: 0; color: var(--tone); }
-.compose-studio.playful-studio .journey-next-art > svg { width: 64px; height: 64px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-.compose-studio.playful-studio .journey-next-art small { padding: 5px 7px; background: #ffffffbd; border: 1px solid var(--tone-border); border-radius: 6px; font-size: 8px; font-weight: 800; letter-spacing: .06em; }
-.compose-studio.playful-studio .journey-next-copy .eyebrow { color: var(--tone); font-size: 8px; }
-.compose-studio.playful-studio .journey-next-copy h2 { margin-top: 9px; color: var(--text); font-size: 23px; font-weight: 800; letter-spacing: -.035em; }
-.compose-studio.playful-studio .journey-next-copy > p { max-width: 570px; margin-top: 7px; color: #7e8172; font-size: 12px; line-height: 1.65; }
-.compose-studio.playful-studio .journey-baseline { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 5px 8px; border-radius: 6px; background: #ffffffa3; color: var(--tone); font-size: 10px; }
-.compose-studio.playful-studio .journey-baseline strong { font-size: 11px; font-variant-numeric: tabular-nums; }
-.compose-studio.playful-studio .journey-next-action { display: grid; justify-items: center; gap: 10px; min-width: 160px; }
-.compose-studio.playful-studio .journey-next-action .raised-button { width: 100%; }
-.compose-studio.playful-studio .journey-next-action > small { color: #979784; font-size: 9px; }
-.compose-studio.playful-studio .journey-footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 23px; color: #8c9484; font-size: 11px; line-height: 1.5; }
-.compose-studio.playful-studio .journey-footer > span { display: inline-flex; align-items: center; gap: 9px; }
-.compose-studio.playful-studio .journey-footer button { color: #727d68; font-size: 11px; }
-.compose-studio.playful-studio .player-bar { border-color: #e7e1d5; background: #fffdf7; box-shadow: 0 -5px 22px #66583c07; }
-.compose-studio.playful-studio .player-track strong { font-weight: 750; }
-.compose-studio.playful-studio .player-track .album-small { border-radius: 10px; box-shadow: 0 2px 0 #dfd4be; }
-.compose-studio.playful-studio .transport-play { width: 41px; height: 41px; background: var(--blue); border: 1px solid #1536b9; border-bottom-width: 3px; border-radius: 13px; }
-.compose-studio.playful-studio .transport-icon { border-radius: 10px; }
-.compose-studio.playful-studio .player-bar input[type=range]::-webkit-slider-runnable-track { height: 4px; background: linear-gradient(to right, #748b52 var(--range-fill), #e9e8db var(--range-fill)); }
-.compose-studio.playful-studio .player-bar input[type=range]::-moz-range-track { height: 4px; background: #e9e8db; }
-.compose-studio.playful-studio .player-bar input[type=range]::-moz-range-progress { height: 4px; background: #748b52; }
-.compose-studio.playful-studio .player-bar input[type=range]::-webkit-slider-thumb { background: #748b52; margin-top: -3px; }
-.compose-studio.playful-studio .player-bar input[type=range]::-moz-range-thumb { background: #748b52; }
-.compose-studio.playful-studio .studio-dialog { border-radius: 18px; background: #fffaf1; border-color: #e6dece; }
-.compose-studio.playful-studio .studio-dialog h2 { font-weight: 800; }
-.compose-studio.playful-studio .auth-emblem { border-bottom: 3px solid #d2dafa; }
 
-@media (hover: hover) and (pointer: fine) {
-  .compose-studio.playful-studio .studio-header nav button:hover { color: var(--blue); background: #f1f0ff; }
-  .compose-studio.playful-studio .raised-button.primary:hover:not(:disabled), .compose-studio.playful-studio .transport-play:hover:not(:disabled) { background: #143bd2; }
-  .compose-studio.playful-studio .clip-select:hover { background: #ffffff40; }
-  .compose-studio.playful-studio .track-mute:hover:not(:disabled) { background: #ffffff9c; }
-  .compose-studio.playful-studio .arrangement-options > summary:hover { color: #46583c; background: #fafbf4; }
+.compose-studio.playful-studio .studio-main { max-width: 1320px; }
+.compose-studio.playful-studio .arrangement-editor { --track-label-width: 210px; }
+.compose-studio.playful-studio .arrangement-track-header { padding: 12px 16px; }
+.compose-studio.playful-studio .track-heading > svg { width: 44px; height: 44px; }
+.compose-studio.playful-studio .track-actions { padding-left: 0; margin-top: 7px; font-size: 10px; }
+.compose-studio.playful-studio .track-mute { display: flex; align-items: center; gap: 6px; width: auto; height: 28px; padding: 0 3px; font-size: 10px; }
+.track-switch { display: flex; align-items: center; width: 28px; height: 17px; padding: 2px; border-radius: 20px; background: #b5bdb2; }
+.track-switch > span { width: 13px; height: 13px; border-radius: 50%; background: #fff; }
+.track-mute[aria-checked=true] .track-switch { background: var(--blue); }
+.track-mute[aria-checked=true] .track-switch > span { transform: translateX(11px); }
+.timeline-next { display: flex; justify-content: space-between; align-items: center; min-height: 30px; margin-top: 5px; padding: 4px 8px; border: 1px solid var(--tone-border); border-bottom-width: 2px; border-radius: 8px; color: var(--tone); background: #ffffffb3; font-size: 10px; font-weight: 750; }
+.compose-studio.playful-studio .arrangement-track-clips { align-self: center; }
+.compose-studio.playful-studio .clip-caption { white-space: normal; }
+.compose-studio.playful-studio .arrangement-options > summary:focus-visible { outline: 3px solid var(--blue); outline-offset: -3px; }
+@media (max-width:760px) {
+  .compose-studio.playful-studio .arrangement-editor { --track-label-width: 170px; }
+  .compose-studio.playful-studio .arrangement-track-header { padding-inline: 12px; }
+  .compose-studio.playful-studio .track-heading { gap: 8px; }
+  .compose-studio.playful-studio .track-heading > svg { width: 34px; height: 38px; }
+  .compose-studio.playful-studio .track-heading h3 { font-size: 15px; }
+  .compose-studio.playful-studio .arrangement-footer { flex-wrap: wrap; gap: 8px; }
 }
-@media (max-width: 1000px) {
-  .compose-studio.playful-studio .studio-header { padding-inline: 22px; gap: 35px; }
-  .compose-studio.playful-studio .studio-main { padding-inline: 22px; }
-  .compose-studio.playful-studio .arrangement-editor { --track-label-width: 178px; }
-  .compose-studio.playful-studio .arrangement-track-header { padding-inline: 15px; }
-  .compose-studio.playful-studio .track-heading { gap: 10px; }
-  .compose-studio.playful-studio .track-heading > svg { width: 41px; height: 45px; }
-  .compose-studio.playful-studio .track-actions { padding-left: 51px; }
-  .compose-studio.playful-studio .journey-next { gap: 20px; padding-inline: 22px; grid-template-columns: 72px minmax(0, 1fr) 150px; }
-  .compose-studio.playful-studio .journey-next-action { min-width: 0; }
-}
-@media (max-width: 760px) {
-  .compose-studio.playful-studio .studio-header { gap: 20px; padding-inline: 18px; }
-  .compose-studio.playful-studio .studio-brand { font-size: 17px; gap: 9px; }
-  .compose-studio.playful-studio .studio-brand > span { width: 33px; height: 33px; }
-  .compose-studio.playful-studio .studio-header nav button { padding-inline: 11px; font-size: 12px; }
-  .compose-studio.playful-studio .studio-main { padding: 30px 18px 145px; }
-  .compose-studio.playful-studio .journey-intro { gap: 20px; margin-bottom: 28px; }
-  .compose-studio.playful-studio .journey-intro h1 { font-size: 32px; }
-  .compose-studio.playful-studio .journey-intro p { font-size: 12px; max-width: 280px; }
-  .compose-studio.playful-studio .journey-progress { width: 150px; gap: 7px 8px; padding-inline: 15px; }
-  .compose-studio.playful-studio .journey-mixbar { padding: 17px; gap: 16px; }
-  .compose-studio.playful-studio .journey-mix-heading h2 { font-size: 16px; }
-  .compose-studio.playful-studio .journey-mix-controls { gap: 8px; }
-  .compose-studio.playful-studio .journey-mix-controls .raised-button { min-width: 116px; padding-inline: 13px; }
-  .compose-studio.playful-studio .arrangement-editor { --track-label-width: 152px; }
-  .compose-studio.playful-studio .track-heading > svg { width: 34px; height: 42px; }
-  .compose-studio.playful-studio .track-heading h3 { font-size: 14px; }
-  .compose-studio.playful-studio .track-actions { padding-left: 44px; font-size: 8px; }
-  .compose-studio.playful-studio .arrangement-footer { flex-wrap: wrap; gap: 3px 15px; padding-inline: 17px; }
-  .compose-studio.playful-studio .journey-next { grid-template-columns: 62px minmax(0, 1fr); gap: 18px; margin-top: 29px; padding: 23px 20px; }
-  .compose-studio.playful-studio .journey-next-art > svg { width: 57px; height: 57px; }
-  .compose-studio.playful-studio .journey-next-copy h2 { font-size: 22px; }
-  .compose-studio.playful-studio .journey-next-action { grid-column: 2; justify-items: stretch; gap: 8px; }
-  .compose-studio.playful-studio .journey-next-action > small { text-align: center; }
-}
-@media (max-width: 480px) {
-  .compose-studio.playful-studio .studio-header { min-height: 62px; gap: 13px; padding-inline: 16px; }
-  .compose-studio.playful-studio .studio-header nav { height: 53px; padding: 6px 16px 7px; gap: 7px; }
-  .compose-studio.playful-studio .studio-header nav button { min-height: 37px; padding: 8px 13px; }
-  .compose-studio.playful-studio .studio-brand { font-size: 17px; }
-  .compose-studio.playful-studio .studio-brand, .compose-studio.playful-studio .header-account { margin-top: 13px; margin-bottom: 1px; }
-  .compose-studio.playful-studio .studio-main { padding: 27px 14px 145px; }
-  .compose-studio.playful-studio .journey-intro { align-items: stretch; flex-direction: column; gap: 18px; margin-bottom: 24px; }
-  .compose-studio.playful-studio .journey-intro .eyebrow { font-size: 8px; }
-  .compose-studio.playful-studio .journey-intro h1 { font-size: 34px; margin-top: 10px; }
-  .compose-studio.playful-studio .journey-intro p { max-width: none; font-size: 12px; margin-top: 9px; }
-  .compose-studio.playful-studio .journey-progress { width: 100%; min-height: 71px; padding: 13px 19px; grid-template-columns: 30px minmax(0, 1fr); column-gap: 13px; border-radius: 13px; }
-  .compose-studio.playful-studio .journey-progress > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
-  .compose-studio.playful-studio .journey-progress > div > span { margin-top: 0; text-align: right; font-size: 10px; }
-  .compose-studio.playful-studio .journey-progress strong { font-size: 22px; margin-right: 1px; }
-  .compose-studio.playful-studio .journey-progress progress { grid-column: 1 / -1; height: 5px; margin-top: 0; }
-  .compose-studio.playful-studio .arrangement-editor { --track-label-width: 132px; border-radius: 14px; }
-  .compose-studio.playful-studio .journey-mixbar { align-items: stretch; flex-direction: column; gap: 14px; padding: 17px 14px 16px; }
-  .compose-studio.playful-studio .journey-mix-heading { gap: 11px; }
-  .compose-studio.playful-studio .journey-mix-icon { width: 37px; height: 37px; border-radius: 10px; }
-  .compose-studio.playful-studio .journey-mix-heading h2 { font-size: 17px; }
-  .compose-studio.playful-studio .journey-mix-heading p { font-size: 10px; }
-  .compose-studio.playful-studio .journey-mix-controls { justify-content: space-between; gap: 12px; }
-  .compose-studio.playful-studio .journey-mix-controls select { max-width: 150px; min-height: 42px; font-size: 16px; }
-  .compose-studio.playful-studio .journey-mix-controls .raised-button { flex: 1; min-width: 0; }
-  .compose-studio.playful-studio .arrangement-options > summary { min-height: 43px; padding-inline: 14px; }
-  .compose-studio.playful-studio .arrangement-options > .arrangement-tools { justify-content: space-between; margin-inline: 12px; gap: 3px; }
-  .compose-studio.playful-studio .arrangement-tools .follow-playhead { margin-right: 2px; }
-  .compose-studio.playful-studio .arrangement-track, .compose-studio.playful-studio .arrangement-track-clips { min-height: 124px; }
-  .compose-studio.playful-studio .arrangement-track-clips { grid-template-rows: 124px; }
-  .compose-studio.playful-studio .arrangement-track-header { padding: 13px 9px 10px; }
-  .compose-studio.playful-studio .track-heading { gap: 6px; }
-  .compose-studio.playful-studio .track-heading > svg { width: 29px; height: 38px; stroke-width: 3; }
-  .compose-studio.playful-studio .track-heading small { font-size: 7px; margin-bottom: 6px; }
+@media (max-width:480px) {
+  .compose-studio.playful-studio .arrangement-editor { --track-label-width: 144px; }
+  .compose-studio.playful-studio .track-heading > svg { width: 27px; }
   .compose-studio.playful-studio .track-heading h3 { font-size: 13px; }
-  .compose-studio.playful-studio .track-heading p { font-size: 9px; margin-top: 4px; }
-  .compose-studio.playful-studio .track-actions { padding-left: 35px; font-size: 8px; margin-top: 4px; gap: 0; }
-  .compose-studio.playful-studio .track-mute { width: 30px; height: 32px; }
-  .compose-studio.playful-studio .ruler-label { padding-inline: 12px; font-size: 8px; }
-  .compose-studio.playful-studio .arrangement-clip, .compose-studio.playful-studio .clip-drop-target { margin-block: 16px 18px; }
-  .compose-studio.playful-studio .clip-select { padding-inline: 8px; }
-  .compose-studio.playful-studio .clip-drag { width: 30px; height: 28px; }
-  .compose-studio.playful-studio .clip-caption { padding-right: 20px; font-size: 8px; }
-  .compose-studio.playful-studio .arrangement-footer { padding: 11px 14px; font-size: 9px; }
-  .compose-studio.playful-studio .arrangement-footer > span { margin: 5px 0 0; text-align: left; font-size: 9px; }
-  .compose-studio.playful-studio .journey-next { grid-template-columns: 48px minmax(0, 1fr); padding: 22px 17px; gap: 16px 13px; margin-top: 28px; border-radius: 14px; }
-  .compose-studio.playful-studio .journey-next-art > svg { width: 46px; height: 49px; }
-  .compose-studio.playful-studio .journey-next-art small { padding-inline: 4px; white-space: nowrap; font-size: 7px; }
-  .compose-studio.playful-studio .journey-next-copy h2 { font-size: 21px; }
-  .compose-studio.playful-studio .journey-next-copy > p { font-size: 11px; }
-  .compose-studio.playful-studio .journey-next-action { grid-column: 1 / -1; }
-  .compose-studio.playful-studio .journey-next-action .raised-button { min-height: 46px; }
-  .compose-studio.playful-studio .journey-footer { align-items: flex-start; gap: 10px; font-size: 10px; }
-  .compose-studio.playful-studio .journey-footer button { flex-shrink: 0; padding-top: 0; font-size: 10px; }
-  .compose-studio.playful-studio .player-bar { padding-inline: 14px; }
-  .compose-studio.playful-studio .transport-play { width: 40px; height: 40px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .compose-studio.playful-studio *, .compose-studio.playful-studio *::before, .compose-studio.playful-studio *::after { animation: none; transition: none; scroll-behavior: auto; }
+  .compose-studio.playful-studio .track-actions { font-size: 9px; }
+  .compose-studio.playful-studio .arrangement-footer > span { text-align: left; }
 }

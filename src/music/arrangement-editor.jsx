@@ -106,7 +106,7 @@ function TimelineClip({ track, level, slot, selected, muted, playing, waveform, 
   </div>;
 }
 
-export function ArrangementEditor({ song, tracks, positions, mutedNotes, selected, player, canEdit, saving, onSelect, onMove, onToggleTrack, onShortcuts, toolbar }) {
+export function ArrangementEditor({ song, tracks, positions, mutedNotes, selected, player, canEdit, saving, ready, onSelect, onMove, onToggleTrack, onShortcuts, toolbar }) {
   const scrollRef = useRef(null);
   const [zoom, setZoom] = useState(1), [follow, setFollow] = useState(true), [dragTarget, setDragTarget] = useState(null);
   const secondsPerBlock = BLOCK_BEATS * 60 / song.bpm;
@@ -131,8 +131,7 @@ export function ArrangementEditor({ song, tracks, positions, mutedNotes, selecte
   const seekProps = { type: 'range', min: 0, max: availableDuration || 1, step: 'any', value: position,
     disabled: !player.hasAudio, onChange: (event) => seek(Number(event.target.value)),
     style: { width: `${availableDuration / fullDuration * 100}%` }, 'aria-valuetext': `${formatTime(position)} of ${formatTime(availableDuration)}` };
-  return <section className="arrangement-editor" aria-label="Music arrangement">
-    {toolbar}
+  return <>{toolbar}<section className="arrangement-editor" aria-label="Music arrangement">
     <details className="arrangement-options"><summary>Playback tools</summary>
     <div className="arrangement-toolbar"><div><h3>Make it your mix</h3><p>Seek, zoom and follow your music.</p></div><div className="arrangement-tools">
       <button className="follow-playhead" aria-label="Follow playhead" aria-pressed={follow} title="Keep the playing section in view" onClick={() => setFollow(!follow)}><EditorIcon name="follow" /> <span>Follow</span></button>
@@ -161,7 +160,7 @@ export function ArrangementEditor({ song, tracks, positions, mutedNotes, selecte
           const slots = visualSlots(progress, positions);
           const keys = progress.levels.filter((level) => level.status === 'completed').map((level) => keyFor(track.id, level.level));
           const muted = keys.length > 0 && keys.every((key) => mutedNotes.includes(key));
-          return <section key={track.id} className={`arrangement-track tone-${TONES[track.id]}`} aria-label={`${track.name} track`}><div className="arrangement-track-header"><div className="track-heading"><InstrumentArt instrument={soundLabel(song, track.id)} /><div><small>TRACK {String(index + 1).padStart(2, '0')}</small><h3>{soundLabel(song, track.id)}</h3><p>{track.name}</p></div></div><div className="track-actions"><span>{keys.length} / {LEVEL_COUNT} notes</span><button className="track-mute" aria-label={`${muted ? 'Unmute' : 'Mute'} ${soundLabel(song, track.id)} track`} aria-pressed={muted} disabled={!keys.length || saving} onClick={() => onToggleTrack(track.id)}><EditorIcon name={muted ? 'mute' : 'volume'} /></button></div></div>
+          return <section key={track.id} className={`arrangement-track tone-${TONES[track.id]}`} aria-label={`${track.name} track`}><div className="arrangement-track-header"><div className="track-heading"><InstrumentArt instrument={soundLabel(song, track.id)} /><div><small>TRACK {String(index + 1).padStart(2, '0')}</small><h3>{soundLabel(song, track.id)}</h3><p>{track.name}</p></div></div><div className="track-actions"><span>{keys.length} / {LEVEL_COUNT} notes</span><button className="track-mute" role="switch" aria-label={`Mute ${soundLabel(song, track.id)}`} aria-checked={muted} disabled={!keys.length || saving} title={!keys.length ? 'Unlock a note to hear this instrument' : undefined} onClick={() => onToggleTrack(track.id)}><span>Mute</span><span className="track-switch" aria-hidden="true"><span /></span></button></div>{progress.target && <button className="timeline-next" aria-label={`Unlock ${soundLabel(song, track.id)} note ${progress.target.level} with ${track.name}`} disabled={!ready} onClick={() => onSelect(track.id, progress.target.level)}>Unlock note {progress.target.level} <span aria-hidden="true">→</span></button>}</div>
             <div className="arrangement-track-clips">{progress.levels.map((level) => <TimelineClip key={level.level} track={track} level={level} slot={slots[level.level]}
               selected={selected.exerciseId === track.id && selected.level === level.level} muted={mutedNotes.includes(keyFor(track.id, level.level))}
               playing={player.status === 'playing' && Math.floor(player.beat / BLOCK_BEATS) + 1 === level.level && level.status === 'completed' && !mutedNotes.includes(keyFor(track.id, level.level)) && (!player.previewKey || player.previewKey === keyFor(track.id, level.level))}
@@ -174,5 +173,5 @@ export function ArrangementEditor({ song, tracks, positions, mutedNotes, selecte
       </div>
     </div>
     <div className="arrangement-footer"><div className="arrangement-legend"><span><i className="legend-next" /> Your next note</span><span><i className="legend-unlocked" /> Unlocked</span><span><EditorIcon name="lock" size={12} /> Coming up</span></div><span>Drag unlocked notes to rearrange. The rhythm stays in order.</span><button className="plain-button" onClick={onShortcuts}>Keyboard shortcuts</button></div>
-  </section>;
+  </section></>;
 }

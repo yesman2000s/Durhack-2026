@@ -39,21 +39,14 @@ export function AlbumCover({ song, small = false }) {
   </div>;
 }
 
-export function PlayerBar({ song, player, onPrevious, onNext, changingTrack }) {
+export function PlayerBar({ player }) {
   const playing = player.status === 'playing';
   const loading = player.status === 'loading';
   const percentage = player.duration ? Math.min(100, player.elapsed / player.duration * 100) : 0;
-  return <footer className="player-bar" aria-label="Music player" data-playing={playing}>
-    <div className="player-track"><AlbumCover song={song} small /><div><strong>{song.title}</strong><span>{playing && <b className="playback-meter" aria-hidden="true"><i /><i /><i /></b>}{player.previewKey ? `Note ${player.previewKey.split(':')[1]} preview` : 'Your movement mix'} <i>·</i> {song.genre}</span>{player.previewKey && <button className="return-to-mix" onClick={player.playMix} disabled={loading}>Back to full mix</button>}</div></div>
-    <div className="player-transport">
-      <div className="transport-buttons">
-        <button className="transport-icon" aria-label="Previous track" title="Previous track" disabled={changingTrack} onClick={onPrevious}><ControlIcon name="previous" /></button>
-        <button className="transport-play" aria-label={loading ? 'Loading music' : playing ? 'Pause playback' : 'Play music'} aria-keyshortcuts="Space" title={!player.hasAudio ? 'Unlock a sound to start listening' : 'Play / pause (Space)'} disabled={loading || !player.hasAudio} onClick={player.toggle}>{loading ? <span className="player-spinner" /> : <ControlIcon name={playing ? 'pause' : 'play'} />}</button>
-        <button className="transport-icon" aria-label="Next track" title="Next track" disabled={changingTrack} onClick={onNext}><ControlIcon name="next" /></button>
-        <button className="transport-icon repeat-control" aria-label="Repeat mix" title={player.loop ? 'Turn repeat off' : 'Repeat this mix'} aria-pressed={player.loop} onClick={() => player.setLoop(!player.loop)}><ControlIcon name="repeat" /></button>
-      </div>
-      <div className="seek-control"><time>{formatTime(player.elapsed)}</time><input type="range" aria-label="Playback position" aria-valuetext={`${formatTime(player.elapsed)} of ${formatTime(player.duration)}`} min="0" max={player.duration || 1} step="any" value={Math.min(player.elapsed, player.duration)} disabled={!player.hasPlayer || loading} onChange={(event) => player.seek(Number(event.target.value))} style={{ '--range-fill': `${percentage}%` }} /><time>{formatTime(player.duration)}</time></div>
-    </div>
-    <div className="volume-control"><button className="transport-icon" aria-label={player.volume === 0 ? 'Unmute music' : 'Mute music'} aria-keyshortcuts="M" title="Mute / unmute (M)" onClick={player.toggleMute}><ControlIcon name={player.volume === 0 ? 'mute' : 'volume'} /></button><input type="range" aria-label="Music volume" min="0" max="1" step="0.01" value={player.volume} onChange={(event) => player.setVolume(Number(event.target.value))} style={{ '--range-fill': `${player.volume * 100}%` }} /><span>{Math.round(player.volume * 100)}%</span></div>
-  </footer>;
+  return <div className="mini-player" role="group" aria-label="Music playback">
+    <button className="mini-play" aria-label={loading ? 'Loading music' : playing ? 'Pause music' : 'Play music'} title={!player.hasAudio ? 'Unlock a note to play your mix' : undefined} disabled={loading || !player.hasAudio} onClick={player.toggle}>
+      {loading ? <span className="player-spinner" aria-hidden="true" /> : <ControlIcon name={playing ? 'pause' : 'play'} />}
+    </button>
+    <input type="range" aria-label="Playback position" aria-valuetext={`${formatTime(player.elapsed)} of ${formatTime(player.duration)}`} min="0" max={player.duration || 1} step="any" value={Math.min(player.elapsed, player.duration)} disabled={!player.hasPlayer || loading} onChange={(event) => player.seek(Number(event.target.value))} style={{ '--range-fill': `${percentage}%` }} />
+  </div>;
 }

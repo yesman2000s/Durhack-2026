@@ -4,14 +4,13 @@ import { EXERCISE_TRACKS, LEVEL_COUNT, progressionTarget } from './level-progres
 import { describeTarget } from './workout-level.js';
 import { songs } from './music/songs.js';
 import { partForTrack } from './music/timeline.js';
-import { visualSlots, moveClipPositions } from './music/arrangement.js';
+import { moveClipPositions } from './music/arrangement.js';
 import { ArrangementEditor } from './music/arrangement-editor.jsx';
 import { useStudioPlayer } from './music/use-studio-player.js';
 import { PlayerBar } from './music/player-controls.jsx';
 import { HistoryPanel, AttemptViewer } from './studio-history.jsx';
 import './studio.css';
 import './music/player.css';
-import { InstrumentArt } from './music/instrument-art.jsx';
 import './music/playful-studio.css';
 
 const LEVELS = Array.from({ length: LEVEL_COUNT }, (_, i) => i + 1);
@@ -126,7 +125,6 @@ function StudioApp() {
   const selectedLevel = selectedTrack.levels.find(({ level }) => level === selected.level) ?? selectedTrack.levels[0];
   const selectedInstrument = EXERCISE_TRACKS.find(({ id }) => id === selected.exerciseId) ?? EXERCISE_TRACKS[0];
   const total = tracks.reduce((sum, track) => sum + track.completedLevels, 0);
-  const nextTrack = selectedTrack.target ? selectedTrack : tracks.find((track) => track.target);
   const selectedKey = noteKey(selected.exerciseId, selected.level);
   const selectedMuted = settings.mutedNotes.includes(selectedKey);
 
@@ -205,9 +203,7 @@ function StudioApp() {
     stopMusic(); location.assign(`/camera.html?exercise=${exerciseId}${level == null ? '' : `&level=${level}`}`);
   }
   function startLevel() { beginLevel(selected.exerciseId, selected.level); }
-  function continueTraining() { if (nextTrack?.target) beginLevel(nextTrack.exerciseId, nextTrack.target.level); }
   const target = selectedTrack.target;
-  const selectedSlot = visualSlots(selectedTrack, settings.positions)[selected.level];
   const selectedSound = soundLabel(currentSong, selected.exerciseId);
   const previewingSelected = audioState === 'playing' && previewKey === selectedKey;
   function selectNote(exerciseId, level) { selectionTouched.current = true; setSelected({ exerciseId, level }); setNoteOpen(true); }
@@ -225,26 +221,15 @@ function StudioApp() {
       <div className="header-account">{user ? <><span className="user-avatar" aria-hidden="true">{user.name?.slice(0, 1).toUpperCase()}</span><span className="user-name">{user.name}</span><button className="plain-button" onClick={signOut}>Sign out</button></> : <button className="raised-button small" onClick={() => setAuthOpen(true)}><Icon name="user" size={17} /> Sign in</button>}</div>
     </header>
     <main className="studio-main">
-      {tab === 'studio' ? <section className="journey-intro">
-        <div><span className="eyebrow">MOVE A LITTLE. MAKE SOMETHING.</span><h1>Find your rhythm.</h1><p>A rep becomes a note. Your progress becomes a song.</p></div>
-        <div className="journey-progress" aria-label={`${total} of 28 notes unlocked`}><Icon name="star" size={30} /><div><strong>{total} <small>/ 28</small></strong><span>notes unlocked</span><progress value={total} max="28" aria-label="Notes unlocked" /></div></div>
-      </section> : <div className="studio-intro"><div><h1>Your attempts</h1><p>Your scores, coaching and saved recordings.</p></div></div>}
+      {tab === 'history' && <div className="studio-intro"><div><h1>Your attempts</h1><p>Your scores, coaching and saved recordings.</p></div></div>}
       {error && <div className="studio-alert" role="alert">{error}<button onClick={loadAccount} className="plain-button">Try again</button></div>}
       {!ready && <p className="loading-account" role="status">Opening your studio…</p>}
       {tab === 'studio' ? <div className="studio-workspace arrangement-workspace">
         <ArrangementEditor song={currentSong} tracks={tracks} positions={settings.positions} mutedNotes={settings.mutedNotes}
-          selected={selected} player={player} canEdit={Boolean(user) && !saving} saving={saving}
+          selected={selected} player={player} canEdit={Boolean(user) && !saving} saving={saving} ready={ready}
           onSelect={selectNote} onMove={moveNote} onToggleTrack={toggleTrack} onShortcuts={() => setShortcutsOpen(true)}
-          toolbar={<div className="journey-mixbar"><div className="journey-mix-heading"><span className="journey-mix-icon"><Icon name="note" size={24} /></span><div><h2>Your movement mix</h2><p>{currentSong.title} <span>·</span> {currentSong.bpm} BPM</p></div></div><div className="journey-mix-controls"><select aria-label="Music genre" value={currentSong.id} onChange={(event) => chooseSong(event.target.value)} disabled={saving}>{songs.map((song) => <option value={song.id} key={song.id}>{song.genre}</option>)}</select><button className="raised-button primary" disabled={audioState === 'loading' || !player.hasAudio} title={!player.hasAudio ? 'Complete your first rep to unlock a sound' : undefined} onClick={() => previewKey ? player.playMix() : player.toggle()}><Icon name={audioState === 'playing' && !previewKey ? 'pause' : 'play'} size={16} />{audioState === 'loading' ? 'Loading…' : audioState === 'playing' && !previewKey ? 'Pause my mix' : 'Play my mix'}</button></div></div>} />
-        {notice && <p className="journey-music-notice" role="status">{notice}</p>}
-        <section className={`journey-next tone-${TONES[nextTrack?.exerciseId ?? selected.exerciseId]}`} aria-label="Your next little win">
-          <div className="journey-next-art"><InstrumentArt instrument={soundLabel(currentSong, nextTrack?.exerciseId ?? selected.exerciseId)} /><small>{nextTrack ? `NOTE ${String(nextTrack.target.level).padStart(2, '0')}` : 'COMPLETE'}</small></div>
-          <div className="journey-next-copy"><span className="eyebrow">YOUR NEXT LITTLE WIN</span><h2>{!nextTrack ? 'A whole soundtrack. Made by you.' : nextTrack.target.level === 1 ? 'One rep. Your first note.' : 'Build on your best.'}</h2>
-            <p>{!nextTrack ? 'Every note is yours. Enjoy your mix or keep practising.' : describeTarget(nextTrack.target)}</p>
-            {nextTrack?.baseline != null && <span className="journey-baseline">Your starting score <strong>{scoreLabel(nextTrack.baseline)}</strong></span>}
-          </div><div className="journey-next-action"><button className="raised-button primary" disabled={!ready || (!nextTrack && !player.hasAudio)} onClick={nextTrack ? continueTraining : player.playMix}>{nextTrack ? 'Let’s move' : 'Play my mix'}<Icon name="arrow" size={18} /></button><small>{nextTrack ? 'Camera on. Distractions off.' : 'Your progress. Your soundtrack.'}</small></div>
-        </section>
-        <div className="journey-footer"><span><Icon name="history" size={17} /> Every attempt is a step forward.</span><button className="plain-button" onClick={() => setTab('history')}>See your attempts <Icon name="arrow" size={16} /></button></div>
+          toolbar={<><div className="studio-mixbar"><div className="studio-mix-heading"><h1>My mix</h1><p>A little movement. One more note.</p></div><div className="studio-mix-controls"><span className="studio-note-count"><strong>{total} / {LEVEL_COUNT * tracks.length}</strong> notes unlocked</span><label className="studio-genre">Music genre<select value={currentSong.id} onChange={(event) => chooseSong(event.target.value)} disabled={saving}>{songs.map((song) => <option value={song.id} key={song.id}>{song.genre}</option>)}</select></label></div></div><PlayerBar player={player} /></>} />
+        {notice && <p className="studio-music-notice" role="status">{notice}</p>}
         <NoteDetail open={noteOpen} onClose={() => setNoteOpen(false)} className={`note-detail tone-${TONES[selected.exerciseId]}`}>
           <div className="detail-heading"><span className="detail-icon"><Icon name={selectedLevel.status === 'completed' ? 'check' : selectedLevel.status === 'locked' ? 'lock' : 'note'} size={24} /></span><span className="detail-status">{selectedLevel.status === 'completed' ? 'Unlocked' : selectedLevel.status === 'locked' ? 'Locked' : 'Your next note'}</span></div>
           <h2>{selectedInstrument.name}</h2><p className="detail-subtitle">{selectedSound} <span>·</span> Note {String(selected.level).padStart(2, '0')}</p>
@@ -253,8 +238,9 @@ function StudioApp() {
           </div>
           <div className="note-actions">{selectedLevel.status === 'completed' ? <>
             <button className="raised-button primary" disabled={selectedMuted || audioState === 'loading'} onClick={() => previewKey === selectedKey ? player.toggle() : player.playNote(selected)}><Icon name={previewingSelected ? 'pause' : 'play'} size={17} />{previewingSelected ? 'Pause note' : 'Play note'}</button>
+            {previewKey && <button className="plain-button" onClick={player.playMix}>Back to full mix</button>}
             <button className="mute-control" role="switch" aria-checked={!selectedMuted} aria-label="Include selected note in mix" disabled={saving} onClick={() => saveSettings({ mutedNotes: selectedMuted ? settings.mutedNotes.filter((key) => key !== selectedKey) : [...settings.mutedNotes, selectedKey] })}><span>Include in mix</span><span className="switch-track"><span /></span></button>
-            <div className="move-controls"><span>Move clip</span><button aria-label="Move selected note left" disabled={saving || selectedSlot === 0} onClick={() => moveNote(selected.exerciseId, selected.level, selectedSlot - 1)}>←</button><button aria-label="Move selected note right" disabled={saving || selectedSlot === LEVEL_COUNT - 1} onClick={() => moveNote(selected.exerciseId, selected.level, selectedSlot + 1)}>→</button></div><p className="detail-hint">Moving clips keeps the music in order.</p>
+
           </> : selectedLevel.status === 'locked' ? <button className="raised-button" onClick={() => selectNote(selected.exerciseId, selectedTrack.completedLevels + 1)}>Go to note {selectedTrack.completedLevels + 1}<Icon name="arrow" size={16} /></button> : <><button className="raised-button primary" disabled={!ready} onClick={startLevel}>Start exercise <Icon name="arrow" size={17} /></button><p className="detail-hint">{user ? 'Choose one rep or a full set.' : 'Sign in to save your progress.'}</p></>}</div>
           <div className="baseline-line"><span>Personal bests</span><strong>{selectedTrack.personalBests}</strong></div>
           {selectedTrack.bestScore != null && <div className="baseline-line"><span>Best form score</span><strong>{selectedTrack.bestScore} / 100</strong></div>}
@@ -262,9 +248,8 @@ function StudioApp() {
         </NoteDetail>
       </div> : <HistoryPanel user={user} attempts={attempts} onSignIn={() => setAuthOpen(true)} onBackToMusic={() => setTab('studio')} onViewAttempt={setViewAttempt} />}
     </main>
-    <PlayerBar song={currentSong} player={player} onPrevious={() => skipSong(-1)} onNext={() => skipSong(1)} changingTrack={saving} />
     {authOpen && <AuthDialog onClose={() => { pendingWorkout.current = null; setAuthOpen(false); }} onSuccess={signedIn} />}
-    {shortcutsOpen && <Dialog label="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)} className="shortcuts-dialog"><span className="eyebrow">PLAYER CONTROLS</span><h2>Keep your flow</h2><p>Use these while browsing your music.</p><dl><div><dt>Play or pause</dt><dd><kbd>Space</kbd></dd></div><div><dt>Skip back / forward 5 seconds</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div><div><dt>Mute or unmute</dt><dd><kbd>M</kbd></dd></div></dl><p>Focus a clip’s grip and use the left or right arrow to move it. Player shortcuts stay out of the way while you type or use a control.</p></Dialog>}
+    {shortcutsOpen && <Dialog label="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)} className="shortcuts-dialog"><span className="eyebrow">PLAYER CONTROLS</span><h2>Keep your flow</h2><p>Use these while browsing your music.</p><dl><div><dt>Play or pause</dt><dd><kbd>Space</kbd></dd></div><div><dt>Skip back / forward 5 seconds</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div><div><dt>Mute or unmute</dt><dd><kbd>M</kbd></dd></div></dl><p>Player shortcuts stay out of the way while you type or use a control.</p></Dialog>}
     {viewAttempt && user && <AttemptViewer key={`${user.id}:${viewAttempt.id}`} user={user} attempt={viewAttempt} onClose={() => setViewAttempt(null)} />}
   </div>;
 }

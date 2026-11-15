@@ -260,3 +260,44 @@ kbd { border: 1px solid #dce1d4; border-bottom-width: 2px; border-radius: 5px; p
 @media (prefers-reduced-motion:reduce) {
   .player-track .playback-meter i { animation: none; transform: scaleY(.65); }
 }
+
+/* One labelled transport starts the complete unlocked arrangement. */
+.compose-studio.playful-studio .player-bar--mix .transport-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  min-width: 112px;
+  height: 42px;
+  padding: 0 17px;
+  border: 1px solid var(--blue-hover);
+  border-bottom-width: 3px;
+  border-radius: 11px;
+  background: var(--blue);
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.compose-studio.playful-studio .player-bar--mix .transport-play:disabled { opacity: .55; cursor: not-allowed; }
+.compose-studio.playful-studio .player-bar--mix .repeat-control[aria-pressed=true] { color: var(--blue); background: var(--blue-soft); }
+.compose-studio.playful-studio .player-bar--mix input[type=range]::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--blue) var(--range-fill), #e4e9dd var(--range-fill)); }
+.compose-studio.playful-studio .player-bar--mix input[type=range]::-moz-range-progress { background: var(--blue); }
+.compose-studio.playful-studio .player-bar--mix input[type=range]::-webkit-slider-thumb { background: var(--blue); }
+.compose-studio.playful-studio .player-bar--mix input[type=range]::-moz-range-thumb { background: var(--blue); }
+@media (hover:hover) and (pointer:fine) {
+  .compose-studio.playful-studio .player-bar--mix .transport-play:hover:not(:disabled) { background: var(--blue-hover); }
+}
+@media (max-width:600px) {
+  .player-bar--mix .transport-buttons { gap: 1px; }
+  .compose-studio.playful-studio .player-bar--mix .transport-play { min-width: 99px; padding-inline: 12px; }
+}
+@media (max-width:480px) {
+  .compose-studio.playful-studio .studio-main { padding-bottom: 190px; }
+  .player-bar--mix { grid-template-columns: minmax(0,1fr); gap: 6px; padding-block: 10px max(9px,env(safe-area-inset-bottom)); }
+  .player-bar--mix .player-track { grid-column: 1; grid-row: 1; justify-content: center; }
+  .player-bar--mix .player-track .album-small { width: 30px; height: 30px; }
+  .player-bar--mix .player-track > div { max-width: calc(100% - 40px); }
+  .player-bar--mix .transport-buttons { grid-column: 1; grid-row: 2; gap: 9px; }
+  .player-bar--mix .seek-control { grid-column: 1; grid-row: 3; margin: 0; }
+}
