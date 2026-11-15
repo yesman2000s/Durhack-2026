@@ -5,6 +5,7 @@ import { visualSlots, dragSlot } from './arrangement.js';
 import { formatTime } from './player-controls.jsx';
 import { InstrumentArt } from './instrument-art.jsx';
 import { MusicNote } from './music-note.jsx';
+import { animateWaveform } from './waveform-animation.js';
 import './arrangement-editor.css';
 
 const TONES = { squat: 'coral', 'knee-raise': 'sky', 'push-up': 'gold', 'heel-raise': 'sage' };
@@ -31,21 +32,26 @@ function EditorIcon({ name, size = 16 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function Waveform({ bins }) {
+function Waveform({ bins, playing, exerciseId, readSpectrum }) {
+  const svgRef = useRef(null);
+  useEffect(() => {
+    if (!playing || !readSpectrum || !svgRef.current) return;
+    return animateWaveform(svgRef.current, exerciseId, readSpectrum);
+  }, [playing, exerciseId, readSpectrum, bins]);
   const step = 128 / bins.length;
-  return <svg className="clip-waveform" viewBox="0 0 128 32" preserveAspectRatio="none" aria-hidden="true">{bins.map((amplitude, i) => {
+  return <svg ref={svgRef} className="clip-waveform" viewBox="0 0 128 32" preserveAspectRatio="none" aria-hidden="true">{bins.map((amplitude, i) => {
     const height = Math.max(1, amplitude * 30);
     return <rect key={i} x={i * step + step / 4} y={(32 - height) / 2} width={step / 2} height={height} rx="1" fill="currentColor" />;
   })}</svg>;
 }
 
-function ClipArt({ waveform }) {
+function ClipArt({ waveform, playing, exerciseId, readSpectrum }) {
   return <span className="clip-art" aria-hidden="true">
-    <Waveform bins={waveform?.length ? waveform : PREVIEW_WAVEFORM} />
+    <Waveform bins={waveform?.length ? waveform : PREVIEW_WAVEFORM} playing={playing} exerciseId={exerciseId} readSpectrum={readSpectrum} />
   </span>;
 }
 
-function TimelineClip({ track, level, slot, selected, muted, playing, waveform, canEdit, scrollRef, onSelect, onMove, onDragTarget }) {
+function TimelineClip({ track, level, slot, selected, muted, playing, audible, waveform, readSpectrum, canEdit, scrollRef, onSelect, onMove, onDragTarget }) {
   const drag = useRef(null), frame = useRef(null), suppressClick = useRef(false);
   const unlocked = level.status === 'completed';
   useEffect(() => () => { cancelAnimationFrame(frame.current); }, []);
@@ -104,7 +110,7 @@ function TimelineClip({ track, level, slot, selected, muted, playing, waveform, 
     <button className="clip-select" {...dragEvents} onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onSelect(); }}
       aria-pressed={selected} aria-label={`${track.name}, note ${level.level}, ${level.status}${muted ? ', muted' : ''}${playing ? ', playing' : ''}`}>
       <span className="clip-title"><span className="clip-number"><MusicNote size={14} />{String(level.level).padStart(2, '0')}</span>{level.status === 'available' ? <span className="clip-next">NEXT</span> : <EditorIcon name={muted ? 'mute' : playing ? 'volume' : unlocked ? 'check' : 'lock'} size={13} />}</span>
-      <ClipArt waveform={unlocked ? waveform : null} />
+      <ClipArt waveform={unlocked ? waveform : null} playing={playing && audible} exerciseId={track.id} readSpectrum={readSpectrum} />
       <span className="clip-caption">{unlocked ? muted ? 'Muted' : playing ? 'Playing' : Number.isFinite(level.score) ? `${Math.round(level.score)} form` : 'Unlocked' : level.status === 'available' ? level.level === 1 ? '1 rep to begin' : 'Your next step' : 'Keep growing'}</span>
     </button>
     {unlocked && <button className="clip-drag" aria-label={`Drag ${track.name} note ${level.level} to rearrange`} title="Drag left or right, or use the arrow keys" disabled={!canEdit} {...dragEvents}
@@ -170,7 +176,7 @@ export function ArrangementEditor({ song, tracks, positions, mutedNotes, selecte
             <div className="arrangement-track-clips">{progress.levels.map((level) => <TimelineClip key={level.level} track={track} level={level} slot={slots[level.level]}
               selected={selected.exerciseId === track.id && selected.level === level.level} muted={mutedNotes.includes(keyFor(track.id, level.level))}
               playing={player.status === 'playing' && Math.floor(player.beat / BLOCK_BEATS) + 1 === level.level && level.status === 'completed' && !mutedNotes.includes(keyFor(track.id, level.level)) && (!player.previewKey || player.previewKey === keyFor(track.id, level.level))}
-              waveform={player.waveforms?.[track.id]?.[level.level - 1]} canEdit={canEdit} scrollRef={scrollRef}
+              waveform={player.waveforms?.[track.id]?.[level.level - 1]} audible={player.volume > 0} readSpectrum={player.readSpectrum} canEdit={canEdit} scrollRef={scrollRef}
               onSelect={() => onSelect(track.id, level.level)} onMove={(slot) => onMove(track.id, level.level, slot)} onDragTarget={showDragTarget} />)}
               {dragTarget?.exerciseId === track.id && <div className="clip-drop-target" style={{ gridColumn: dragTarget.slot + 1, gridRow: 1 }} aria-hidden="true" />}
             </div></section>;

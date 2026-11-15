@@ -8,10 +8,10 @@ const part = (levels, exerciseId = 'squat') => ({ buffer: { duration: 56 }, exer
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} ≠ ${expected}`);
 
 function audioContext() {
-  const sources = [], gains = [];
-  const node = () => ({ disconnects: 0, connect(next) { return next; }, disconnect() { this.disconnects++; } });
+  const sources = [], gains = [], analysers = [];
+  const node = () => ({ disconnects: 0, connections: [], connect(next) { this.connections.push(next); return next; }, disconnect() { this.disconnects++; } });
   return {
-    currentTime: 4, destination: {}, sources, gains,
+    currentTime: 4, state: 'running', destination: {}, sources, gains, analysers,
     createGain() {
       const result = { ...node(), gain: { events: [],
         setValueAtTime(...args) { this.events.push(['set', ...args]); },
@@ -24,6 +24,12 @@ function audioContext() {
     createBufferSource() {
       const result = { ...node(), stops: [], start(...args) { this.started = args; }, stop(...args) { this.stops.push(args); } };
       sources.push(result); return result;
+    },
+    createAnalyser() {
+      const result = { ...node(), fftSize: 2048, samples: new Uint8Array(32).fill(48 + analysers.length * 64), reads: 0,
+        getByteFrequencyData(destination) { this.reads++; destination.set(this.samples.subarray(0, destination.length)); },
+      };
+      analysers.push(result); return result;
     },
   };
 }
@@ -206,4 +212,132 @@ test('empty arrangements stay silent and scheduling failures leave a reusable pa
   context.createBufferSource = createSource;
   player.play();
   assert.equal(player.getState().status, 'playing');
+});
+
+test('each exercise shares one spectrum analyser after its source fades and before the master gain', (t) => {
+  const context = audioContext();
+  const player = createTimelinePlayer(context, song, [part([1, 2, 4]), part([1], 'knee-raise')]);
+  t.after(() => player.dispose());
+  const spectrum = new Uint8Array(40).fill(255);
+  assert.equal(player.readSpectrum('squat', spectrum), false);
+  assert.ok(spectrum.every((value) => value === 0));
+  player.play();
+  assert.equal(context.analysers.length, 2);
+  assert.ok(context.analysers.every((analyser) => analyser.fftSize === 64));
+  const squatSource = context.sources.find((source) => source.started[1] === 24);
+  const squatAnalyser = squatSource.connections[0].connections[0];
+  const kneeSource = context.sources.find((source) => source.connections[0].connections[0] !== squatAnalyser);
+  assert.ok(context.sources.every((source) => context.gains.includes(source.connections[0])));
+  assert.equal(context.sources.filter((source) => source.connections[0].connections[0] === squatAnalyser).length, 2);
+  assert.ok(context.analysers.every((analyser) => analyser.connections[0] === context.gains[0]));
+  assert.equal(context.gains[0].connections[0], context.destination);
+  assert.equal(player.readSpectrum('squat', spectrum), false, 'scheduling lead-in is silent');
+  context.currentTime = 4.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  assert.deepEqual(spectrum.slice(0, 32), squatAnalyser.samples);
+  assert.ok(spectrum.slice(32).every((value) => value === 0), 'unused destination bytes are cleared');
+  assert.equal(player.readSpectrum('knee-raise', spectrum), true);
+  assert.deepEqual(spectrum.slice(0, 32), kneeSource.connections[0].connections[0].samples);
+  context.currentTime = 12.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true, 'sampling continues across joined note boundaries');
+  assert.equal(player.readSpectrum('knee-raise', spectrum), false, 'finished instruments stop sampling during another instrument\'s span');
+  context.currentTime = 20.1;
+  assert.equal(player.readSpectrum('squat', spectrum), false, 'nonadjacent spans preserve a silent gap');
+  context.currentTime = 28.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true, 'later spans reuse the same exercise analyser');
+  assert.deepEqual(spectrum.slice(0, 32), squatAnalyser.samples);
+  assert.equal(player.readSpectrum('push-up', spectrum), false);
+  assert.ok(spectrum.every((value) => value === 0));
+});
+
+test('spectrum sampling clears stale bins on pause, seek lead-in, muted gaps, volume mute and suspended audio', (t) => {
+  const context = audioContext();
+  const input = part([1, 2, 3]);
+  input.levels[1].enabled = false;
+  const player = createTimelinePlayer(context, song, [input]);
+  t.after(() => player.dispose());
+  const spectrum = new Uint8Array(32);
+  function silent() {
+    spectrum.fill(255);
+    assert.equal(player.readSpectrum('squat', spectrum), false);
+    assert.ok(spectrum.every((value) => value === 0));
+  }
+  player.play();
+  context.currentTime = 4.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  player.pause(); silent();
+  player.play(); silent();
+  context.currentTime += 0.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  player.seek(10); silent();
+  context.currentTime += 0.1;
+  silent();
+  player.seek(17); silent();
+  context.currentTime += 0.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  player.setVolume(0); silent();
+  player.setVolume(0.4);
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  context.state = 'suspended'; silent();
+  context.state = 'interrupted'; silent();
+  context.state = 'running';
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  player.seek(24); silent();
+  player.stop(); silent();
+});
+
+test('preview and loop spectra follow audible source time, then disposal disconnects every analyser once', (t) => {
+  const context = audioContext();
+  const player = createTimelinePlayer(context, song, [part([7])], { preview: true, loop: true });
+  t.after(() => player.dispose());
+  const spectrum = new Uint8Array(32);
+  player.play();
+  context.currentTime = 4.1;
+  assert.equal(player.readSpectrum('squat', spectrum), true);
+  context.currentTime = 12.035;
+  context.sources[0].onended();
+  assert.equal(player.readSpectrum('squat', spectrum), true, 'next loop is already connected');
+  player.dispose(); player.dispose();
+  assert.ok(context.analysers.every((analyser) => analyser.disconnects === 1));
+  spectrum.fill(255);
+  assert.equal(player.readSpectrum('squat', spectrum), false);
+  assert.ok(spectrum.every((value) => value === 0));
+});
+
+test('missing or failing analyser support preserves direct playback and zeroes optional spectrum data', (t) => {
+  for (const failure of ['missing', 'creation', 'setup', 'connection', 'input', 'read']) {
+    const context = audioContext();
+    if (failure === 'missing') delete context.createAnalyser;
+    else if (failure === 'creation') context.createAnalyser = () => { throw new Error('Unavailable'); };
+    else {
+      const createAnalyser = context.createAnalyser;
+      context.createAnalyser = () => {
+        const analyser = createAnalyser();
+        if (failure === 'setup') Object.defineProperty(analyser, 'fftSize', { set() { throw new Error('Unsupported FFT'); } });
+        if (failure === 'connection') analyser.connect = () => { throw new Error('Unsupported routing'); };
+        if (failure === 'read') analyser.getByteFrequencyData = () => { throw new Error('Unavailable sample'); };
+        return analyser;
+      };
+    }
+    if (failure === 'input') {
+      const createGain = context.createGain;
+      context.createGain = () => {
+        const gain = createGain(), connect = gain.connect;
+        gain.connect = function(next) {
+          if (typeof next.getByteFrequencyData === 'function') throw new Error('Unsupported analyser input');
+          return connect.call(this, next);
+        };
+        return gain;
+      };
+    }
+    const player = createTimelinePlayer(context, song, [part([1, 2])]);
+    t.after(() => player.dispose());
+    assert.doesNotThrow(() => player.play());
+    context.currentTime = 4.1;
+    const spectrum = new Uint8Array(32).fill(255);
+    assert.equal(player.readSpectrum('squat', spectrum), false);
+    assert.ok(spectrum.every((value) => value === 0));
+    assert.equal(player.getState().status, 'playing');
+    if (failure !== 'read') assert.ok(context.sources.every((source) => source.connections[0].connections[0] === context.gains[0]));
+  }
 });

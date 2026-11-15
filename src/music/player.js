@@ -26,8 +26,60 @@ export function createTimelinePlayer(context, song, parts, {
   let disposed = false;
   const active = new Map();
   const retiring = new Set();
+  const analysers = new Map();
   master.gain.value = currentVolume * gainLimit;
   master.connect(context.destination);
+
+  function analyserFor(exerciseId) {
+    if (analysers.has(exerciseId)) return analysers.get(exerciseId);
+    let analyser = null;
+    try {
+      if (typeof context.createAnalyser === 'function') {
+        analyser = context.createAnalyser();
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.65;
+        if (typeof analyser.getByteFrequencyData !== 'function') throw new Error('Spectrum sampling is unavailable');
+        analyser.connect(master);
+      }
+    } catch {
+      // Visualisation is optional; audio must work on partial implementations.
+      try { analyser?.disconnect(); } catch { /* Nothing remains to sample. */ }
+      analyser = null;
+    }
+    analysers.set(exerciseId, analyser);
+    return analyser;
+  }
+
+  function connectOutput(gain, exerciseId) {
+    const analyser = analyserFor(exerciseId);
+    if (analyser) {
+      try { gain.connect(analyser); return analyser; }
+      catch { /* Retain the direct audio path if this connection is unsupported. */ }
+    }
+    gain.connect(master);
+    return null;
+  }
+
+  function readSpectrum(exerciseId, destination) {
+    destination.fill(0);
+    if (disposed || status !== 'playing' || currentVolume <= 0
+      || (context.state && context.state !== 'running')) return false;
+    const analyser = analysers.get(exerciseId);
+    if (!analyser) return false;
+    const now = context.currentTime;
+    // Scheduled source intervals also handle previews, seek lead-in, muted
+    // gaps and loop boundaries without relying on React's slower UI clock.
+    let audible = false;
+    for (const entry of active.values()) {
+      if (entry.exerciseId === exerciseId && entry.analyser === analyser && !entry.disconnected && now >= entry.startAt && now < entry.endAt) {
+        audible = true;
+        break;
+      }
+    }
+    if (!audible) return false;
+    try { analyser.getByteFrequencyData(destination); return true; }
+    catch { destination.fill(0); return false; }
+  }
 
   function elapsed() {
     if (status !== 'playing' || !duration) return position;
@@ -96,9 +148,10 @@ export function createTimelinePlayer(context, song, parts, {
       const startAt = cycleStart + clipStart;
       const source = context.createBufferSource();
       const gain = context.createGain();
-      const entry = { source, gain, disconnected: false };
+      const entry = { source, gain, exerciseId: block.exerciseId, startAt, endAt: startAt + length, disconnected: false };
       source.buffer = block.buffer;
-      source.connect(gain).connect(master);
+      source.connect(gain);
+      entry.analyser = connectOutput(gain, block.exerciseId);
       active.set(source, entry);
       source.onended = () => {
         if (disposed || token !== generation || !active.has(source)) return;
@@ -214,9 +267,14 @@ export function createTimelinePlayer(context, song, parts, {
       disposed = true;
       status = 'paused';
       cancelSources(true);
+      for (const analyser of analysers.values()) {
+        try { analyser?.disconnect(); } catch { /* An optional analyser may already be unavailable. */ }
+      }
+      analysers.clear();
       master.disconnect();
     },
     getState,
+    readSpectrum,
   };
   return player;
 }

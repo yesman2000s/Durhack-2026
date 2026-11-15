@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadStem } from './beat.js';
 import { BLOCK_BEATS, partForTrack } from './timeline.js';
 import { createTimelinePlayer } from './player.js';
@@ -42,6 +42,11 @@ export function useStudioPlayer({ song, tracks = [], mutedNotes = [], accountId 
   const [view, setView] = useState({ status: 'idle', elapsed: 0, duration: plan.duration, beat: 0, previewKey: null, hasPlayer: false });
   const waveformKey = `${song.id}/${song.bpm}`;
   const [waveformView, setWaveformView] = useState({ key: waveformKey, accountId, values: {} });
+  const readSpectrum = useCallback((exerciseId, destination) => {
+    if (transport.current) return transport.current.readSpectrum(exerciseId, destination);
+    destination.fill(0);
+    return false;
+  }, []);
 
   function notice(message) { if (mounted.current) current.current.onNotice?.(message); }
   function cancelTransport() {
@@ -279,6 +284,7 @@ export function useStudioPlayer({ song, tracks = [], mutedNotes = [], accountId 
     duration: view.status === 'idle' ? plan.duration : view.duration,
     volume, loop, hasAudio: plan.enabled.length > 0,
     waveforms: waveformView.key === waveformKey && waveformView.accountId === accountId ? waveformView.values : {},
+    readSpectrum,
     toggle, pause, resume, playMix, playNote, seek, seekMix, setVolume, setLoop, toggleMute, reset,
   };
 }
