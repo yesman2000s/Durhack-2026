@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { EXERCISE_TRACKS } from './level-progression.js';
 import { getLocalAttempt } from './local-attempts.js';
 import { attemptOutcome, mergeAttemptReps } from './attempt-review.js';
+import { summarizeSet } from './set-feedback.js';
+import { SetFeedback } from './set-feedback.jsx';
 import './studio-history.css';
 
 const tones = { squat: 'coral', 'knee-raise': 'sky', 'push-up': 'gold', 'heel-raise': 'sage' };
@@ -94,7 +96,7 @@ export function AttemptViewer({ user, attempt, onClose }) {
     {error && <p className="history-review-error" role="alert">{error}</p>}
     {loading ? <p role="status">Opening your attempt…</p> : videoUrl ? <video className="saved-video" src={videoUrl} controls playsInline preload="metadata" /> : <div className="no-recording"><HistoryIcon size={28} /><p>No video is stored here for this attempt.</p><small>Your scores and coaching are below. Recordings stay on the device where you practised.</small></div>}
     {videoUrl && <button className="plain-button download-video" onClick={download}><HistoryIcon name="download" /> Download recording</button>}
-    {detail.feedback?.summary && <div className="review-coach"><strong>Latest coaching</strong><p>{detail.feedback.summary}</p>{detail.feedback.tips?.length > 0 && <ul>{detail.feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}</div>}
+    {!loading && detail.mode === 'set' && detail.status !== 'active' ? <SetFeedback feedback={summarizeSet(reps)} /> : detail.feedback?.summary && <div className="review-coach"><strong>Latest coaching</strong><p>{detail.feedback.summary}</p>{detail.feedback.tips?.length > 0 && <ul>{detail.feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}</div>}
     {reps.length > 0 && <div className="review-reps"><h3>Rep by rep</h3>{reps.map((rep, index) => {
       const feedback = rep.feedback;
       const score = feedback?.score ?? rep.score;

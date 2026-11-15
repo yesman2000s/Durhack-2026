@@ -14,6 +14,8 @@ import { SkeletonPlayback } from './skeleton-playback.jsx';
 import { CoachingAudioControl, FormFeedback } from './form-feedback.jsx';
 import { createRepCoach } from './rep-coach.js';
 import { createCaptureSession } from './capture-session.js';
+import { summarizeSet } from './set-feedback.js';
+import { SetFeedback } from './set-feedback.jsx';
 import { captureImage, downloadEvidence, exportSnapshot, FORM_GUIDE, framePose, makeEvidence } from './evidence.js';
 import { createSetRecording, describeTarget, parseRequestedLevel, selectLevel, workoutApi } from './workout-level.js';
 import { requestPersistentStorage, saveLocalAttempt } from './local-attempts.js';
@@ -451,7 +453,12 @@ function App() {
       setLevelOutcome(data.attempt);
       setLevelPhase('complete');
       setError(context.sourceError || '');
-      getCoach().speak(data.attempt.passed ? 'A new personal best! Your new note is ready.' : data.attempt.personalBest ? 'A new personal best! Your score is saved.' : 'Your workout is saved.');
+      if (context.session?.mode === 'set') {
+        const feedback = summarizeSet([...context.reps.values()].map((rep) => ({ id: rep.id, review: context.reviews[rep.id] })));
+        getCoach().speak(feedback.summary, feedback.focus.map((tip) => tip.text));
+      } else {
+        getCoach().speak(data.attempt.passed ? 'A new personal best! Your new note is ready.' : data.attempt.personalBest ? 'A new personal best! Your score is saved.' : 'Your workout is saved.');
+      }
     } catch (err) {
       if (levelAttempt.current === context) { setError(err.message); setLevelPhase('review-error'); }
     } finally { context.finishing = false; }
@@ -1230,6 +1237,8 @@ function App() {
   const completedReviews = workoutView?.reps.filter((rep) => reviews[rep.id]?.status === 'complete').length ?? 0;
   const visibleTarget = levelAttempt.current && captureLocked ? levelAttempt.current.target : selectedLevel.target;
   const reviewBusy = levelPhase === 'reviewing' || levelPhase === 'saving';
+  const setFeedback = workoutView?.mode === 'set' && !workoutView.active && levelPhase === 'complete'
+    ? summarizeSet(workoutView.reps.map((rep) => ({ id: rep.id, review: reviews[rep.id] }))) : null;
   const nextLevel = progress?.tracks?.find((entry) => entry.exerciseId === exercise)?.target?.level;
   const signInUrl = `/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
   const liveCue = currentFeedback?.summary || (inSet && workoutView.repCount ? 'Nice work. Keep moving at your own pace.' : viewfinderCue);
@@ -1292,6 +1301,8 @@ function App() {
                 <h2 id="workout-result-title">{reviewBusy ? levelPhase === 'saving' ? 'Saving your set' : 'A little feedback, then your music' : levelPhase === 'review-error' ? 'Your reps are safe here' : levelOutcome?.personalBest ? 'New personal best!' : levelOutcome?.source === 'simulated' ? 'Practice set complete' : 'Your set is saved'}</h2>
                 <p id="workout-result-description" role="status" aria-live="polite">{reviewBusy ? `${completedReviews} of ${workoutView?.repCount ?? 0} reps reviewed. Your score is checked once every review is ready.` : levelPhase === 'review-error' ? 'A review or connection needs another try.' : levelAttempt.current?.sourceError || (levelOutcome?.passed ? 'You earned a new note. Head back and hear your song grow.' : levelOutcome?.personalBest ? 'Your best form score is saved.' : levelOutcome?.source === 'simulated' ? 'Examples help you practise. Use your camera or a video to unlock a level.' : levelOutcome?.repCount ? describeTarget(selectedLevel.target) : 'No complete rep was found. Reposition your camera and try a comfortable movement.')}</p>
                 {levelOutcome?.score != null && <div className="level-score"><strong>{levelOutcome.score}<small>/100 form</small></strong><span>{levelOutcome.repCount} {levelOutcome.repCount === 1 ? 'rep' : 'reps'} reviewed</span></div>}
+                {setFeedback && <SetFeedback feedback={setFeedback} />}
+                {setFeedback && <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />}
                 {levelPhase === 'review-error' && <div className="level-result-actions">
                   <button className="button button-primary" onClick={retryLevelReviews}>Retry and finish</button>
                   <button className="button button-secondary" onClick={() => void finishLevelAttempt(levelAttempt.current, 'error')}>Save without unlocking</button>
@@ -1431,6 +1442,7 @@ function App() {
           {workoutView.repCount > 0 && <button className="button button-secondary" onClick={downloadSet}><Icon name="download" />Download set data</button>}
         </div>
         {workoutView.repCount === 0 && <p>Completed reps and their feedback will appear here.</p>}
+        {setFeedback && <SetFeedback feedback={setFeedback} />}
         <div className="set-rep-list">{workoutView.reps.map((rep) => {
           const review = reviews[rep.id];
           return <button key={rep.id} className="set-rep" aria-pressed={result?.id === rep.id} onClick={() => setResult(repResults.current.get(rep.id))}>

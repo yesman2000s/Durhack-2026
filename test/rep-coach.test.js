@@ -15,6 +15,18 @@ const rep = (id) => ({
 });
 const session = (repNumber, id = 'set-1') => ({ id, mode: 'set', repNumber, previousReps: [] });
 
+test('whole-set spoken feedback carries next-set tips and respects mute', () => {
+  const f = fixture();
+  f.coach.speak('Your set averaged 82/100 across 3 scored reps.', ['Keep steady.']);
+  assert.deepEqual(JSON.parse(f.speech()[0].options.body), {
+    score: null, summary: 'Your set averaged 82/100 across 3 scored reps.', tips: ['Keep steady.'],
+  });
+  f.coach.setMuted(true);
+  f.coach.speak('Another set.', ['Lower slowly.']);
+  assert.equal(f.speech().length, 1);
+  f.coach.dispose();
+});
+
 function fixture() {
   const requests = [];
   const updates = [];

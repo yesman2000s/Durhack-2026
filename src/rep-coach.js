@@ -225,10 +225,10 @@ export function createRepCoach({
         failedIds: [...records.values()].filter((job) => job.status === 'error').map((job) => job.id) });
       return new Promise((resolve) => idleWaiters.add(resolve));
     },
-    speak(summary) {
+    speak(summary, tips = []) {
       if (disposed || muted || !summary) return;
       const job = { id: null, repNumber: null, generation, sequence: sequence++, controller: new AbortController() };
-      queueSpeech(job, { score: null, summary, tips: [] });
+      queueSpeech(job, { score: null, summary, tips });
     },
     retry: (rep, session) => enqueue(rep, session, true),
     reset,

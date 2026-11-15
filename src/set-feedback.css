@@ -1,0 +1,10 @@
+.set-feedback { margin-top: 20px; padding: 18px 0 4px; border-top: 1px solid #dce5d3; color: #293c2d; text-align: left; overflow-wrap: anywhere; }
+.set-feedback h3 { margin: 0; font-size: 1rem; font-weight: 800; }
+.set-feedback p { margin: 8px 0; font-size: .9rem; line-height: 1.55; }
+.set-feedback > small { display: block; color: #61705c; font-size: .76rem; line-height: 1.5; }
+.set-feedback-focus { margin-top: 14px; padding: 14px 16px; border-radius: 14px; background: #eaf3df; }
+.set-feedback h4 { margin: 0 0 8px; font-size: .82rem; }
+.set-feedback ul { margin: 0; padding-left: 18px; }
+.set-feedback li { padding-left: 2px; font-size: .85rem; line-height: 1.5; }
+.set-feedback li + li { margin-top: 8px; }
+.set-feedback li span { display: block; color: #61705c; font-size: .72rem; }
