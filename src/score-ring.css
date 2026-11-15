@@ -1,0 +1,33 @@
+.score-ring { --ring-color: #648f3e; position: relative; display: grid; grid-template-rows: auto auto; justify-items: center; flex: 0 0 auto; width: 142px; color: #293c2d; }
+.score-ring svg { display: block; width: 100%; overflow: visible; }
+.score-ring circle { fill: none; stroke-width: 8; }
+.score-ring-track { stroke: #dfe8d3; }
+.score-ring-value { stroke: var(--ring-color); stroke-linecap: round; transition: stroke-dasharray 240ms ease-out; }
+.score-ring-number { position: absolute; inset: 0 0 auto; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.score-ring-number strong { font-size: 2.4rem; line-height: 1.1; letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
+.score-ring-number small { margin-top: 5px; font-size: .72rem; color: #61705c; }
+.score-ring-label { margin-top: 4px; font-size: .76rem; font-weight: 750; }
+.score-ring-compact { width: 82px; }
+.score-ring-compact .score-ring-number strong { font-size: 1.45rem; }
+.score-ring-compact .score-ring-number small { font-size: .61rem; margin-top: 2px; }
+.score-ring-compact .score-ring-label { font-size: .65rem; }
+.rep-feedback-content { display: flex; align-items: center; gap: 24px; margin-top: 16px; }
+.rep-feedback-copy { min-width: 0; flex: 1; text-align: left; }
+.rep-feedback-copy p { margin: 6px 0; }
+.instant-rep-feedback { padding: 12px 14px; border-radius: 14px; background: #edf3e5; text-align: left; }
+.instant-rep-feedback strong { display: block; font-size: .9rem; }
+.instant-rep-feedback p { margin: 4px 0 0; font-size: .85rem; line-height: 1.45; color: #53654b; }
+.instant-rep-feedback small { display: block; margin-top: 7px; font-size: .72rem; color: #61705c; }
+.rep-feedback-pending { color: #61705c; font-size: .8rem; }
+.level-result-card > .rep-feedback-content { justify-content: center; }
+.level-result-card .rep-feedback-content .score-ring { width: 124px; }
+.workout-cue .rep-feedback-content { margin: 0; gap: 14px; }
+.workout-cue .score-ring { color: #f7fbf1; --ring-color: #b9e58f; }
+.workout-cue .score-ring-track { stroke: #4c624b; }
+.workout-cue .score-ring-number strong { font-size: 1.45rem; }
+.playful-camera .coaching-live .score-ring-number strong, .playful-camera .workout-cue .score-ring-number strong { font-size: 1.45rem; letter-spacing: -.06em; }
+.workout-cue .score-ring small { color: #d4e5c7; }
+.workout-cue .rep-feedback-copy strong { font-size: 1rem; }
+.workout-cue .rep-feedback-copy small { font-size: .75rem; }
+@media (max-width: 480px) { .rep-feedback-content { gap: 14px; } .rep-feedback-content > .score-ring { width: 102px; } .rep-feedback-content > .score-ring-compact { width: 68px; } }
+@media (prefers-reduced-motion: reduce) { .score-ring-value { transition: none; } }

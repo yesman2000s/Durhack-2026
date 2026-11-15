@@ -11,6 +11,7 @@ STANDING_MS = 1000
 STANDING_GAP_MS = 220
 TRACKING_GAP_MS = 400
 FINISH_MS = 330
+FINISH_GRACE_MS = 240
 STANCE_CHANGE_MS = 160
 MAX_REP_MS = 20000
 
@@ -111,6 +112,7 @@ class Rep:
     depth_samples: int = 0
     returned: Sample | None = None
     finish_at: float | None = None
+    finish_seen_at: float | None = None
     finish_ms: float = 0
     speed: float = 0
     peak_out: float = 0
@@ -534,8 +536,27 @@ class MobilityTracker:
     def _miss_rep(self, timestamp):
         self.rep.total += 1
         self.rep.max_gap = max(self.rep.max_gap, timestamp - self.last_seen_at)
-        self.rep.finish_at = None
+        self._interrupt_finish(timestamp)
         self.rep.latest = None
+
+    def _interrupt_finish(self, timestamp, reset=False):
+        rep = self.rep
+        rep.finish_at = None
+        if reset or (rep.finish_seen_at is not None and timestamp - rep.finish_seen_at > FINISH_GRACE_MS):
+            rep.returned = None
+            rep.finish_ms = 0
+            rep.finish_seen_at = None
+
+    def _confirmed_fast_turn(self, sample):
+        rep = self.rep
+
+        def near_peak(candidate, before):
+            interval = rep.peak.time - candidate.time if before else candidate.time - rep.peak.time
+            return (candidate.started and candidate.range >= max(self.rules.start, rep.peak.range * 0.3)
+                    and candidate.range <= rep.peak.range - self.rules.reversal and 35 <= interval <= 250)
+
+        return (rep.depth_samples == 1 and rep.peak.range >= self.rules.peak * 1.35
+                and near_peak(sample, False) and any(near_peak(candidate, True) for candidate in rep.samples))
 
     def _track(self, sample, gap, standing, events):
         rep = self.rep
@@ -556,7 +577,7 @@ class MobilityTracker:
                     and sample.time - rep.peak.time >= 65):
                 rep.last_at_peak = sample
                 self.phase = "bottom"
-            if rep.depth_samples >= 2 and rep.peak.range - sample.range >= self.rules.reversal:
+            if (rep.depth_samples >= 2 or self._confirmed_fast_turn(sample)) and rep.peak.range - sample.range >= self.rules.reversal:
                 self.phase = "ascending"
             elif standing and sample.time - rep.started_at >= 250:
                 self._discard(events, "incomplete-descent")
@@ -564,15 +585,17 @@ class MobilityTracker:
         if self.phase != "ascending":
             return
         rep.peak_back = max(rep.peak_back, -rep.speed)
+        if rep.finish_seen_at is not None and sample.time - rep.finish_seen_at > FINISH_GRACE_MS:
+            self._interrupt_finish(sample.time, True)
         if not standing:
-            rep.returned = rep.finish_at = None
-            rep.finish_ms = 0
+            self._interrupt_finish(sample.time, not sample.returned or abs(sample.range) > self.rules.return_band * 2)
             return
         if rep.returned is None:
             rep.returned = sample
         if rep.finish_at is not None and sample.time - rep.finish_at <= 190:
             rep.finish_ms += sample.time - rep.finish_at
         rep.finish_at = sample.time
+        rep.finish_seen_at = sample.time
         if rep.finish_ms < FINISH_MS:
             return
         if rep.valid / rep.total < 0.8:

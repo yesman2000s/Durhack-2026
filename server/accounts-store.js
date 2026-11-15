@@ -37,7 +37,7 @@ function attemptValue(row) {
   };
 }
 
-export function createAccountStore({ filename = resolve(process.cwd(), '.data', 'compose.sqlite'), now = () => Date.now() } = {}) {
+export function createAccountStore({ filename = resolve(process.cwd(), '.data', 'compose.sqlite'), now = () => Date.now(), recoverPendingReviews = true } = {}) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
   db.exec(`
@@ -79,6 +79,9 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT PRIMARY KEY REFERENCES users(id), value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS music_access (
+      user_id TEXT PRIMARY KEY REFERENCES users(id), granted_at TEXT NOT NULL
+    );
   `);
   for (const table of ['attempts', 'level_progress']) {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === 'variant')) {
@@ -107,8 +110,10 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
   `);
   // A provider request cannot survive a server restart. Keep its evidence of
   // failure visible, and let the user finish or retry the saved attempt.
-  db.prepare("UPDATE rep_scores SET status = 'error', error = ? WHERE status = 'pending'")
-    .run('The server restarted during this review. Retry this rep review.');
+  if (recoverPendingReviews) {
+    db.prepare("UPDATE rep_scores SET status = 'error', error = ? WHERE status = 'pending'")
+      .run('The server restarted during this review. Retry this rep review.');
+  }
 
   const iso = () => new Date(now()).toISOString();
   function transaction(handle) {
@@ -125,6 +130,7 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     return row;
   }
   function progress(userId) {
+    const unlocked = Boolean(db.prepare('SELECT 1 FROM music_access WHERE user_id = ?').get(userId));
     const completed = db.prepare('SELECT * FROM level_progress WHERE user_id = ? ORDER BY level').all(userId);
     const bests = db.prepare(`
       SELECT a.exercise_id, MAX(a.score) AS best_score, COUNT(*) AS personal_bests
@@ -134,12 +140,13 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     const tracks = EXERCISE_TRACKS.map(({ id }) => {
       const rows = completed.filter((row) => row.exercise_id === id);
       const best = bests.find((row) => row.exercise_id === id);
-      const track = { exerciseId: id, variant: rows[0]?.variant ?? null, baseline: rows[0]?.baseline ?? null, completedLevels: rows.length,
+      const track = { exerciseId: id, variant: rows[0]?.variant ?? null, baseline: rows[0]?.baseline ?? null, completedLevels: unlocked ? LEVEL_COUNT : rows.length,
+        musicUnlocked: unlocked,
         bestScore: best?.best_score ?? null, personalBests: best?.personal_bests ?? 0,
         levels: Array.from({ length: LEVEL_COUNT }, (_, index) => {
           const level = index + 1;
           const row = rows.find((item) => item.level === level);
-          return { level, status: row ? 'completed' : level === rows.length + 1 ? 'available' : 'locked',
+          return { level, status: row || unlocked ? 'completed' : level === rows.length + 1 ? 'available' : 'locked',
             score: row?.score ?? null, repCount: row?.rep_count ?? 0, completedAt: row?.completed_at ?? null };
         }) };
       return { ...track, target: progressionTarget(track) };
@@ -165,6 +172,11 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
 
   return {
     close: () => db.close(),
+    // Local provisioning only. No HTTP route exposes this entitlement.
+    unlockMusic(userId) {
+      db.prepare('INSERT INTO music_access (user_id, granted_at) VALUES (?, ?) ON CONFLICT(user_id) DO NOTHING').run(userId, iso());
+      return progress(userId);
+    },
     async register(input) {
       const { email, password, name } = credentials(input, true);
       const salt = randomBytes(16).toString('hex');

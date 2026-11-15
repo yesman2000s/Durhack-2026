@@ -31,11 +31,13 @@ async function readJson(req) {
 export function createAccountService({ store = createAccountStore(), mongoWorkouts, now = () => Date.now() } = {}) {
   const limits = new Map();
   async function syncWorkouts(userId) {
-    if (!mongoWorkouts) return;
+    if (!mongoWorkouts || !store.scoredWorkouts(userId, 0, 1).length) return;
     try {
       await mongoWorkouts.sync(userId, store.scoredWorkouts);
     } catch {
-      throw new HttpError(503, 'Workout scores could not sync to MongoDB. Try again shortly.');
+      // SQLite is authoritative. A failed mirror must not hide saved progress
+      // or turn a committed workout into an apparent save failure.
+      return 'Your workout is saved. The history backup will retry when the connection returns.';
     }
   }
   function requireUser(req) {
@@ -85,8 +87,8 @@ export function createAccountService({ store = createAccountStore(), mongoWorkou
       const user = requireUser(req);
       if (path === '/api/progress' && req.method === 'GET') {
         const progress = store.progress(user.id);
-        await syncWorkouts(user.id);
-        return send(progress);
+        const syncWarning = await syncWorkouts(user.id);
+        return send({ ...progress, ...(syncWarning ? { syncWarning } : {}) });
       }
       if (path === '/api/settings' && ['POST', 'PATCH'].includes(req.method)) {
         return send({ settings: store.saveSettings(user.id, await readJson(req)) });
@@ -98,8 +100,8 @@ export function createAccountService({ store = createAccountStore(), mongoWorkou
       if (match?.[2] && req.method === 'POST') {
         const input = await readJson(req);
         const result = store.finishAttempt(user.id, match[1], input.reason ?? 'completed');
-        await syncWorkouts(user.id);
-        return send(result);
+        const syncWarning = await syncWorkouts(user.id);
+        return send({ ...result, ...(syncWarning ? { syncWarning } : {}) });
       }
       return send({ error: 'This account endpoint or method is unavailable.' }, 405);
     } catch (error) {

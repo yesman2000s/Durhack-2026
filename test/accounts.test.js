@@ -196,12 +196,23 @@ test('a MongoDB sync retry preserves every score and credits only personal bests
   for (const [index, score] of scores.entries()) {
     const attempt = await h.start({ level });
     await h.review(attempt, `progress-${index}`, score);
+    let offline;
     if (index === 0) {
-      assert.equal((await h.finish(attempt)).statusCode, 503);
+      offline = await h.finish(attempt);
+      assert.equal(offline.statusCode, 200);
+      assert.equal(offline.body.syncWarning, 'Your workout is saved. The history backup will retry when the connection returns.');
+      assert.equal(offline.body.attempt.score, score);
+      assert.equal(offline.body.attempt.personalBest, true);
+      assert.equal(offline.body.progress.tracks[0].completedLevels, 1);
       fail = false;
     }
     const finished = await h.finish(attempt);
     assert.equal(finished.statusCode, 200);
+    assert.equal(Object.hasOwn(finished.body, 'syncWarning'), false);
+    if (offline) {
+      assert.deepEqual(finished.body.attempt, offline.body.attempt);
+      assert.deepEqual(finished.body.progress, offline.body.progress);
+    }
     if (finished.body.attempt.passed) level++;
     assert.deepEqual((await h.finish(attempt)).body, finished.body);
   }
@@ -212,6 +223,47 @@ test('a MongoDB sync retry preserves every score and credits only personal bests
   assert.equal(progress.tracks[1].personalBests, 0);
   assert.deepEqual([...saved.values()].map(({ score, personalBest }) => [score, personalBest]),
     [[60, true], [68, true], [65, false], [68, false], [71, true]]);
+});
+
+test('saved progress remains available while the workout mirror is offline and retries on the next read', async (t) => {
+  let offline = false, calls = 0;
+  const mirrored = new Map();
+  const h = await harness(t, ':memory:', {
+    async sync(userId, readWorkouts) {
+      calls++;
+      if (offline) throw new Error('Mirror offline');
+      for (const row of readWorkouts(userId, 0, 200)) mirrored.set(row.attemptId, row);
+    },
+  });
+  const attempt = await h.start();
+  await h.review(attempt, 'offline-progress-rep', 83);
+  const finished = await h.finish(attempt);
+  assert.equal(finished.statusCode, 200);
+  offline = true;
+  const progress = await h.call('/api/progress');
+  assert.equal(progress.statusCode, 200);
+  assert.equal(progress.body.syncWarning, 'Your workout is saved. The history backup will retry when the connection returns.');
+  assert.deepEqual(progress.body.tracks, finished.body.progress.tracks);
+  assert.deepEqual(progress.body.settings, finished.body.progress.settings);
+  assert.equal((await h.call('/api/attempts')).body.attempts[0].score, 83);
+  offline = false;
+  const recovered = await h.call('/api/progress');
+  assert.equal(recovered.statusCode, 200);
+  assert.equal(Object.hasOwn(recovered.body, 'syncWarning'), false);
+  assert.deepEqual(recovered.body, finished.body.progress);
+  assert.equal(calls, 3);
+  assert.equal(mirrored.size, 1);
+});
+
+test('an empty account can load unlocked music without connecting to a workout mirror', async (t) => {
+  let calls = 0;
+  const h = await harness(t, ':memory:', { async sync() { calls++; throw new Error('Mirror offline'); } });
+  h.store.unlockMusic(h.user.id);
+  const response = await h.call('/api/progress');
+  assert.equal(response.statusCode, 200);
+  assert.equal(Object.hasOwn(response.body, 'syncWarning'), false);
+  assert.equal(calls, 0);
+  assert.ok(response.body.tracks.every((track) => track.completedLevels === 7));
 });
 
 test('personal bests keep counting after the final note', async (t) => {
