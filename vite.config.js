@@ -29,8 +29,8 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         input: {
-          camera: fileURLToPath(new URL('./index.html', import.meta.url)),
-          music: fileURLToPath(new URL('./music.html', import.meta.url)),
+          main: fileURLToPath(new URL('./index.html', import.meta.url)),
+          camera: fileURLToPath(new URL('./camera.html', import.meta.url)),
         },
       },
     },

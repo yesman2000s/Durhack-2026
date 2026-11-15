@@ -2,6 +2,8 @@
 
 Standalone browser and Python tools for capturing exercise reps from the side. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. The browser supports one rep or a full set, with automatic Gemini form feedback and optional ElevenLabs speech after each rep. For a squat, the first valid rep becomes your baseline for that camera session.
 
+The browser app has two pages: `index.html` is the movement home and music player, and `camera.html` is the recording and tracking page. Unlocked movement notes open the camera page, which has a Home link in its header.
+
 | Exercise | Why it is included | Practice reference |
 | --- | --- | --- |
 | Squat | A comfortable lower-body movement related to sitting and standing. Use a stable chair for support as needed. | [NHS mini-squats](https://www.nhs.uk/live-well/exercise/strength-exercises/), [sit-to-stand and squat video](https://player.vimeo.com/video/878233151) |
@@ -26,13 +28,11 @@ The camera stage takes up the first screen. Choose **Full screen** to hide the b
 
 To analyze a recording, choose the exercise, capture mode, and **Upload video**. A side view with the whole body visible works best. Leave about a second in the starting pose and hold briefly at the finish. The app scans for the first complete rep or a set using the full frame and the clip's own clock. A set also ends at the end of the clip. Choose **Play rep with guide** on the latest rep to see the amber example and your mint skeleton move together over the clip. MP4 (H.264) and WebM are good starting formats. The original clip stays on your device; completed rep images and measurements are sent to Gemini for coaching.
 
-## Try the music studio
+## Movement music
 
-Visit [http://localhost:5173/music.html](http://localhost:5173/music.html). Pick a genre and an exercise, enter a **Test streak**, and click **Mock success**. Only the selected exercise's streak updates. All unlocked parts start together from the same point in the recording, and each fades out at its own unlocked length. The mix ends when the longest part finishes. Each streak day adds one sixteenth note (a quarter beat) to its part. The 112-beat excerpts provide 448 daily unlocks. The streak counter can keep growing after all audio is unlocked. **Mock failure** triggers no reward. **Reset demo** restores the starting streaks.
+The home page includes the beat player. Choose a genre, play the combined unlocked mix, or preview an exercise's instrument. A completed camera rep unlocks more music for that movement; progress is saved in this browser. Squat adds drums, knee raise adds bass, and push-ups add piano where the selected recording has a piano stem.
 
-The music frontend expects a result such as `{ exerciseId: 'squat', success: true, streak: 4 }`. Only a successful response with a recognized exercise ID and valid streak can change that exercise's track. The backend is responsible for calculating the streak.
-
-The demo ships 28-bar excerpts of three Kevin MacLeod instrumentals, trimmed to the beat grid and separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock uses drums, bass, guitar, piano and the residual instrument stem. Hip-hop and EDM use bass, the residual instrument stem and three frequency bands filtered from drums with FFmpeg. The percussion bands contain overlapping sounds from the drum stem. The vocal estimate is excluded, and each genre has five playable parts.
+The home player uses beat-matched excerpts of three Kevin MacLeod instrumentals, separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock provides drums, bass and piano stems. Hip-hop and EDM use bass, a melodic residual stem, and frequency bands filtered from drums with FFmpeg; the push-up piano part uses that residual where a piano stem is unavailable.
 
 - Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
 - EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)
