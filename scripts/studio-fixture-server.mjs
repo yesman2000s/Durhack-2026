@@ -12,6 +12,9 @@ import { normalizeFeedback } from '../server/feedback.js';
 export const FIXTURE_CREDENTIALS = {
   email: 'studio@example.test', password: 'Compose-test-2026', name: 'Studio Preview',
 };
+export const UNLOCKED_FIXTURE_CREDENTIALS = {
+  email: 'unlocked@example.test', password: 'Compose-test-2026', name: 'Unlocked Preview',
+};
 
 const feedback = (score) => ({
   score,
@@ -36,6 +39,9 @@ function toneWav() {
 }
 
 async function seed(store) {
+  const preview = await store.register(UNLOCKED_FIXTURE_CREDENTIALS);
+  store.logout(preview.token);
+  store.unlockMusic(preview.user.id);
   const { user, token } = await store.register(FIXTURE_CREDENTIALS);
   store.logout(token); // Browser QA must still exercise the normal login flow.
   function attempt(exerciseId, level, score) {
@@ -79,13 +85,13 @@ export async function createStudioFixtureServer() {
       "default-src 'self'", "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
       "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
       "media-src 'self' data: blob:", "font-src 'self' data:",
-      "connect-src 'self' ws://localhost:5175", "worker-src 'self' blob:",
+      "connect-src 'self' ws://localhost:5175 ws://127.0.0.1:5175", "worker-src 'self' blob:",
       "frame-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'",
     ].join('; ');
     const server = await createServer({
       configFile: false, envFile: false, envPrefix: '__COMPOSE_FIXTURE_UNUSED__', root: process.cwd(),
       server: {
-        host: 'localhost', port: 5175, strictPort: true, open: false,
+        host: '127.0.0.1', port: 5175, strictPort: true, open: false,
         fs: { strict: true, allow: [process.cwd()], deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.data/**', '**/.aws/**', '**/.codex/**'] },
       },
       plugins: [{
@@ -122,7 +128,7 @@ export async function createStudioFixtureServer() {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const { server } = await createStudioFixtureServer();
   await server.listen();
-  console.log('TEST WORKSPACE: http://localhost:5175');
+  console.log('TEST WORKSPACE: http://127.0.0.1:5175');
   console.log(`Sign in: ${FIXTURE_CREDENTIALS.email} / ${FIXTURE_CREDENTIALS.password}`);
   console.log('In-memory database. Seeded levels: squat 2, knee raise 1, push-ups 3, heel raise 0.');
   console.log('Scoring is fixed at 82; speech is a short local tone. External browser requests are blocked.');

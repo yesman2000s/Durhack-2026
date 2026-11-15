@@ -8,6 +8,7 @@ import { moveClipPositions } from './music/arrangement.js';
 import { ArrangementEditor } from './music/arrangement-editor.jsx';
 import { useStudioPlayer } from './music/use-studio-player.js';
 import { PlayerBar } from './music/player-controls.jsx';
+import { MusicNote } from './music/music-note.jsx';
 import { HistoryPanel, AttemptViewer } from './studio-history.jsx';
 import './studio.css';
 import './music/player.css';
@@ -35,6 +36,7 @@ async function api(path, options = {}) {
 }
 
 function Icon({ name, size = 20 }) {
+  if (name === 'note') return <MusicNote size={size} />;
   const paths = {
     play: <path d="m9 5 11 7-11 7Z" fill="currentColor" stroke="none" />,
     pause: <path d="M8 5v14M16 5v14" strokeWidth="4" />,
@@ -146,6 +148,7 @@ function StudioApp() {
         const [data, history] = await Promise.all([api('/api/progress'), api('/api/attempts')]);
         if (generation !== accountGeneration.current) return;
         setTracks(data.tracks); if (!settingsPending.current && revision === settingsRevision.current) setSettings(data.settings); setAttempts(history.attempts);
+        if (data.syncWarning) setNotice(data.syncWarning);
         if (!selectionTouched.current) {
           const nextTrack = data.tracks.find((track) => track.target);
           if (nextTrack) setSelected({ exerciseId: nextTrack.exerciseId, level: nextTrack.target.level });

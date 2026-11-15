@@ -3,6 +3,7 @@ const STANDING_MS = 1000;
 const STANDING_GAP_MS = 220;
 const TRACKING_GAP_MS = 400;
 const FINISH_MS = 330;
+const FINISH_GRACE_MS = 240;
 const STANCE_CHANGE_MS = 160;
 const MAX_REP_MS = 20000;
 const TO_DEGREES = 180 / Math.PI;
@@ -418,7 +419,7 @@ export class MobilityTracker {
     const beganAt = Math.max(this.reference.time, onset.time - 240);
     const rep = {
       id: this.nextRepId++, startedAt: beganAt, frames: [], samples: [], latest: onset,
-      peak: onset, lastAtPeak: onset, depthSamples: 0, returned: null, finishAt: null,
+      peak: onset, lastAtPeak: onset, depthSamples: 0, returned: null, finishAt: null, finishSeenAt: null,
       finishMs: 0, speed: 0, peakOut: 0, peakBack: 0, valid: 1, total: 1, maxGap: 0,
     };
     this.rep = rep;
@@ -431,8 +432,32 @@ export class MobilityTracker {
   missRep(time) {
     this.rep.total += 1;
     this.rep.maxGap = Math.max(this.rep.maxGap, time - this.lastSeenAt);
-    this.rep.finishAt = null;
+    this.interruptFinish(time);
     this.rep.latest = null;
+  }
+
+  interruptFinish(time, reset = false) {
+    const rep = this.rep;
+    rep.finishAt = null;
+    if (reset || (rep.finishSeenAt !== null && time - rep.finishSeenAt > FINISH_GRACE_MS)) {
+      rep.returned = null;
+      rep.finishMs = 0;
+      rep.finishSeenAt = null;
+    }
+  }
+
+  confirmedFastTurn(sample) {
+    const rep = this.rep;
+    // At 12 Hz a complete movement can have just one frame at maximum range.
+    // Require separately observed travel on BOTH sides of a clear peak, so an
+    // isolated joint jump or a gap at the reversal cannot stand in for a rep.
+    const nearPeak = (candidate, before) => candidate.started &&
+      candidate.range >= Math.max(this.rules.start, rep.peak.range * 0.3) &&
+      candidate.range <= rep.peak.range - this.rules.reversal &&
+      (before ? rep.peak.time - candidate.time : candidate.time - rep.peak.time) >= 35 &&
+      (before ? rep.peak.time - candidate.time : candidate.time - rep.peak.time) <= 250;
+    return rep.depthSamples === 1 && rep.peak.range >= this.rules.peak * 1.35 &&
+      nearPeak(sample, false) && rep.samples.some((candidate) => nearPeak(candidate, true));
   }
 
   track(sample, gap, standing, events) {
@@ -457,7 +482,7 @@ export class MobilityTracker {
         rep.lastAtPeak = sample;
         this.phase = 'bottom';
       }
-      if (rep.depthSamples >= 2 && rep.peak.range - sample.range >= this.rules.reversal) {
+      if ((rep.depthSamples >= 2 || this.confirmedFastTurn(sample)) && rep.peak.range - sample.range >= this.rules.reversal) {
         this.phase = 'ascending';
       } else if (standing && sample.time - rep.startedAt >= 250) {
         this.discard(events, 'incomplete-descent');
@@ -466,15 +491,15 @@ export class MobilityTracker {
     }
     if (this.phase !== 'ascending') return;
     rep.peakBack = Math.max(rep.peakBack, -rep.speed);
+    if (rep.finishSeenAt !== null && sample.time - rep.finishSeenAt > FINISH_GRACE_MS) this.interruptFinish(sample.time, true);
     if (!standing) {
-      rep.returned = null;
-      rep.finishAt = null;
-      rep.finishMs = 0;
+      this.interruptFinish(sample.time, !sample.returned || Math.abs(sample.range) > this.rules.returnBand * 2);
       return;
     }
     rep.returned ??= sample;
     if (rep.finishAt !== null && sample.time - rep.finishAt <= 190) rep.finishMs += sample.time - rep.finishAt;
     rep.finishAt = sample.time;
+    rep.finishSeenAt = sample.time;
     if (rep.finishMs < FINISH_MS) return;
     if (rep.valid / rep.total < 0.8) {
       this.discard(events, 'low-confidence');

@@ -1,4 +1,12 @@
 import React from 'react';
+import { ScoreRing } from './score-ring.jsx';
+import { instantRepFeedback } from './instant-feedback.js';
+
+export function InstantRepFeedback({ rep, pending = true }) {
+  const feedback = instantRepFeedback(rep);
+  return <div className="instant-rep-feedback"><strong>{feedback.title}</strong><p>{feedback.summary}</p>
+    {pending && <small>Your form score and coaching are being reviewed.</small>}</div>;
+}
 
 export function FormFeedback({ rep, review, onRetry }) {
   const feedback = review?.feedback;
@@ -7,15 +15,15 @@ export function FormFeedback({ rep, review, onRetry }) {
   return <section className="form-feedback" aria-labelledby={heading}>
     <h3 id={heading}>Form feedback</h3>
     <div role="status">
-      {pending && <p>{review.status === 'queued' ? 'Rep queued for analysis…' : 'Reviewing your movement and images…'}</p>}
-      {!review && <p>Feedback will appear after this rep is analyzed.</p>}
+      {(pending || !review) && <InstantRepFeedback rep={rep} />}
       {review?.error && <p>{review.error}</p>}
-      {feedback && <>
-        {feedback.summary && <p>{feedback.summary}</p>}
-        {feedback.score !== null && <p><strong>{feedback.score} / 100</strong> form score</p>}
+      {feedback && <div className="rep-feedback-content">
+        <ScoreRing score={feedback.score} />
+        <div className="rep-feedback-copy">{feedback.summary && <p>{feedback.summary}</p>}
         {!feedback.summary && feedback.score === null && <p>A clearer view is needed to review this rep.</p>}
         {feedback.tips.length > 0 && <ul>{feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}
-      </>}
+        </div>
+      </div>}
       {review?.speechError && <p>{review.speechError} Your written feedback is still available.</p>}
     </div>
     {review?.status === 'error' && onRetry && <button className="button button-secondary" type="button" onClick={onRetry}>Retry analysis</button>}

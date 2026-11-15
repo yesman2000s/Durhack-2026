@@ -11,7 +11,10 @@ import { poseInCenter } from './camera-crop.js';
 import { createPosePreview } from './pose-preview.js';
 import { makeMotionTrace, recordPose } from './motion-trace.js';
 import { SkeletonPlayback } from './skeleton-playback.jsx';
-import { CoachingAudioControl, FormFeedback } from './form-feedback.jsx';
+import { CoachingAudioControl, FormFeedback, InstantRepFeedback } from './form-feedback.jsx';
+import { ScoreRing } from './score-ring.jsx';
+import { instantRepFeedback } from './instant-feedback.js';
+import { MusicNote } from './music/music-note.jsx';
 import { createRepCoach } from './rep-coach.js';
 import { createCaptureSession } from './capture-session.js';
 import { summarizeSet } from './set-feedback.js';
@@ -449,6 +452,7 @@ function App() {
       await persistAttempt(context, { attempt: data.attempt, endedAt: data.attempt.endedAt, session: context.session });
       if (levelAttempt.current !== context) return;
       context.finalized = true;
+      if (data.syncWarning) setLocalWarning((previous) => [previous, data.syncWarning].filter(Boolean).join(' '));
       setProgress(data.progress);
       setLevelOutcome(data.attempt);
       setLevelPhase('complete');
@@ -592,6 +596,7 @@ function App() {
           const next = await workoutApi('/api/progress');
           if (!live) return;
           setProgress(next);
+          if (next.syncWarning) setLocalWarning(next.syncWarning);
         } else {
           setProgress(null);
         }
@@ -1232,8 +1237,8 @@ function App() {
   const inSet = workoutView?.mode === 'set' && workoutView.active;
   const latestRep = workoutView?.reps.at(-1);
   const latestReview = latestRep && reviews[latestRep.id];
-  const feedbackRep = workoutView?.reps.findLast((rep) => reviews[rep.id]?.feedback);
-  const currentFeedback = feedbackRep && reviews[feedbackRep.id].feedback;
+  const currentFeedback = latestReview?.feedback;
+  const instantFeedback = latestRep ? instantRepFeedback(latestRep) : null;
   const completedReviews = workoutView?.reps.filter((rep) => reviews[rep.id]?.status === 'complete').length ?? 0;
   const visibleTarget = levelAttempt.current && captureLocked ? levelAttempt.current.target : selectedLevel.target;
   const reviewBusy = levelPhase === 'reviewing' || levelPhase === 'saving';
@@ -1241,7 +1246,7 @@ function App() {
     ? summarizeSet(workoutView.reps.map((rep) => ({ id: rep.id, review: reviews[rep.id] }))) : null;
   const nextLevel = progress?.tracks?.find((entry) => entry.exerciseId === exercise)?.target?.level;
   const signInUrl = `/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
-  const liveCue = currentFeedback?.summary || (inSet && workoutView.repCount ? 'Nice work. Keep moving at your own pace.' : viewfinderCue);
+  const liveCue = currentFeedback?.summary || instantFeedback?.summary || viewfinderCue;
 
   return <main className="main playful-camera" data-exercise={exercise}>
         <section ref={studio} className="camera-panel" data-expanded={expanded} data-fallback={fallbackFullscreen} data-immersive={immersive} aria-labelledby="studio-title">
@@ -1274,7 +1279,7 @@ function App() {
           <div className="viewport-wrap" data-active={active}>
             {immersive && <div className="workout-hud">
               <div className="workout-count" aria-label={`${workoutView?.repCount ?? 0} reps captured, target ${visibleTarget?.reps ?? 1}`}>
-                <span className="workout-note" aria-hidden="true">♪</span>
+                <span className="workout-note" aria-hidden="true"><MusicNote size={26} /></span>
                 <strong key={workoutView?.repCount ?? 0}>{workoutView?.repCount ?? 0}<span> / {visibleTarget?.reps ?? 1}</span></strong>
                 <small>{mode === 'demo' || visibleTarget?.practice ? 'Practice' : `Level ${levelAttempt.current?.level ?? 1}`}</small>
               </div>
@@ -1289,7 +1294,14 @@ function App() {
                 }}><Icon name={voiceEnabled ? 'sound' : 'mute'} /></button>
                 <button className="workout-end" onClick={() => finishWorkout('manual')}>End set</button>
               </div>
-              <div className="workout-cue" role="status"><strong>{liveCue}</strong>
+              <div className="workout-cue" role="status">
+                <div className="rep-feedback-content">
+                  {currentFeedback && <ScoreRing score={currentFeedback.score} compact />}
+                  <div className="rep-feedback-copy">{latestRep && <small>{instantFeedback.title}</small>}<strong>{liveCue}</strong>
+                    {latestRep && !currentFeedback && <small>{latestReview?.status === 'error' ? 'Review unavailable. Your rep is saved for retry.' : 'Form review in progress'}</small>}
+                    {currentFeedback?.tips?.[0] && <small>{currentFeedback.tips[0]}</small>}
+                  </div>
+                </div>
                 {inSet && workoutView.repCount > 0 && workoutView.idleMs >= 6000 && <small>Finishing in {Math.ceil(workoutView.remainingMs / 1000)}s · move to continue</small>}
                 {coachAudio.status === 'blocked' && <button className="text-button" onClick={() => void getCoach().resumeAudio()}>Play coaching audio</button>}
               </div>
@@ -1297,10 +1309,14 @@ function App() {
             {(reviewBusy || levelPhase === 'review-error' || levelOutcome) && <WorkoutResultDialog labelledBy="workout-result-title" describedBy="workout-result-description" restoreFocusRef={studio}>
               <div className="level-result-card">
                 {levelOutcome?.passed && <div className="level-confetti" aria-hidden="true">{Array.from({ length: 16 }, (_, index) => <i key={index} style={{ '--i': index, '--x': `${(index % 8) * 14 - 49}%` }} />)}</div>}
-                <div className="level-result-icon" data-passed={levelOutcome?.passed}>{levelOutcome?.passed ? '♪' : reviewBusy ? '…' : '✓'}</div>
-                <h2 id="workout-result-title">{reviewBusy ? levelPhase === 'saving' ? 'Saving your set' : 'A little feedback, then your music' : levelPhase === 'review-error' ? 'Your reps are safe here' : levelOutcome?.personalBest ? 'New personal best!' : levelOutcome?.source === 'simulated' ? 'Practice set complete' : 'Your set is saved'}</h2>
-                <p id="workout-result-description" role="status" aria-live="polite">{reviewBusy ? `${completedReviews} of ${workoutView?.repCount ?? 0} reps reviewed. Your score is checked once every review is ready.` : levelPhase === 'review-error' ? 'A review or connection needs another try.' : levelAttempt.current?.sourceError || (levelOutcome?.passed ? 'You earned a new note. Head back and hear your song grow.' : levelOutcome?.personalBest ? 'Your best form score is saved.' : levelOutcome?.source === 'simulated' ? 'Examples help you practise. Use your camera or a video to unlock a level.' : levelOutcome?.repCount ? describeTarget(selectedLevel.target) : 'No complete rep was found. Reposition your camera and try a comfortable movement.')}</p>
-                {levelOutcome?.score != null && <div className="level-score"><strong>{levelOutcome.score}<small>/100 form</small></strong><span>{levelOutcome.repCount} {levelOutcome.repCount === 1 ? 'rep' : 'reps'} reviewed</span></div>}
+                <div className="level-result-icon" data-passed={levelOutcome?.passed}>{levelOutcome?.passed ? <MusicNote size={36} /> : '✓'}</div>
+                <h2 id="workout-result-title">{reviewBusy ? levelPhase === 'saving' ? 'Saving your workout' : workoutView?.mode === 'set' ? 'Set complete' : 'Rep complete' : levelPhase === 'review-error' ? 'Your reps are safe here' : levelOutcome?.personalBest ? 'New personal best!' : levelOutcome?.source === 'simulated' ? 'Practice complete' : 'Your workout is saved'}</h2>
+                <p id="workout-result-description" role="status" aria-live="polite">{reviewBusy ? `${completedReviews} of ${workoutView?.repCount ?? 0} reps reviewed. Your score is checked once every review is ready.` : levelPhase === 'review-error' ? 'A review or connection needs another try.' : levelAttempt.current?.sourceError || (levelOutcome?.passed ? 'You earned a new note. Head back and hear your song grow.' : levelOutcome?.personalBest ? 'Your best form score is saved.' : levelOutcome?.source === 'simulated' ? 'Examples help you practise. Use your camera or a video to unlock a level.' : workoutView?.repCount ? (levelOutcome?.score == null ? 'Your rep was captured. A clearer view is needed for a form score.' : describeTarget(selectedLevel.target)) : 'No complete rep was found. Reposition your camera and try a comfortable movement.')}</p>
+                {latestRep && !levelOutcome && <div className="rep-feedback-content">
+                  <ScoreRing score={currentFeedback?.score} pending={reviewBusy && !currentFeedback} compact />
+                  <div className="rep-feedback-copy">{currentFeedback ? <><strong>Rep {latestRep.repNumber} feedback</strong><p>{currentFeedback.summary}</p>{currentFeedback.tips?.[0] && <p>{currentFeedback.tips[0]}</p>}</> : <InstantRepFeedback rep={latestRep} pending={reviewBusy} />}</div>
+                </div>}
+                {levelOutcome && latestRep && <div className="rep-feedback-content"><ScoreRing score={levelOutcome.score} label="Workout score" /><div className="rep-feedback-copy"><strong>{workoutView.repCount} {workoutView.repCount === 1 ? 'rep' : 'reps'} captured</strong>{!setFeedback && currentFeedback && <><p>{currentFeedback.summary}</p>{currentFeedback.tips.map((tip) => <p key={tip}>{tip}</p>)}</>}</div></div>}
                 {setFeedback && <SetFeedback feedback={setFeedback} />}
                 {setFeedback && <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />}
                 {levelPhase === 'review-error' && <div className="level-result-actions">
@@ -1410,10 +1426,10 @@ function App() {
             </div>
             <details className="camera-privacy"><summary><Icon name="shield" />About your recording</summary><p>Tracking runs on this device. Each completed rep sends images and movement data to Gemini for feedback. ElevenLabs reads the feedback aloud. Saved footage stays on this device.</p></details>
             {latestRep && <div className="coaching-live" aria-live="polite">
-              <strong>{latestReview?.status === 'queued' || latestReview?.status === 'analyzing'
-                ? `Reviewing rep ${latestRep.repNumber}…` : `Feedback · rep ${feedbackRep?.repNumber ?? latestRep.repNumber}`}</strong>
+              <strong>{currentFeedback ? `Feedback · rep ${latestRep.repNumber}` : instantFeedback.title}</strong>
+              {!currentFeedback && <InstantRepFeedback rep={latestRep} pending={latestReview?.status !== 'error'} />}
               {latestReview?.error && <p>{latestReview.error} <button className="text-button" onClick={() => retryFeedback(repResults.current.get(latestRep.id))}>Retry</button></p>}
-              {currentFeedback && <p>{currentFeedback.summary} {currentFeedback.tips.join(' ')}</p>}
+              {currentFeedback && <div className="rep-feedback-content"><ScoreRing score={currentFeedback.score} compact /><p className="rep-feedback-copy">{currentFeedback.summary} {currentFeedback.tips.join(' ')}</p></div>}
               <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />
             </div>}
           </div>

@@ -1,18 +1,90 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { EXERCISE_TRACKS } from './level-progression.js';
 import { getLocalAttempt } from './local-attempts.js';
 import { attemptOutcome, mergeAttemptReps } from './attempt-review.js';
 import { summarizeSet } from './set-feedback.js';
 import { SetFeedback } from './set-feedback.jsx';
+import { exerciseProgress, progressCoordinates } from './exercise-progress.js';
+import { MusicNote } from './music/music-note.jsx';
 import './studio-history.css';
 
 const tones = { squat: 'coral', 'knee-raise': 'sky', 'push-up': 'gold', 'heel-raise': 'sage' };
 const scoreLabel = (score) => Number.isFinite(score) ? Math.round(score) : '—';
 const dateLabel = (value) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+const progressScore = (value) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+const shortDate = (time) => new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(new Date(time));
 function HistoryIcon({ name, size = 20 }) {
+  if (name === 'note') return <MusicNote size={size} />;
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {name === 'close' ? <path d="m6 6 12 12M6 18 18 6" /> : name === 'arrow' ? <path d="M4 12h15m-6-6 6 6-6 6" /> : name === 'download' ? <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" /> : name === 'note' ? <><path d="M9 18V5l11-2v13M9 9l11-2" /><ellipse cx="6" cy="18" rx="3" ry="2" /><ellipse cx="17" cy="16" rx="3" ry="2" /></> : <><path d="M3 11a9 9 0 1 1 2 7M3 4v7h7m2-5v6l4 2" /></>}
+    {name === 'close' ? <path d="m6 6 12 12M6 18 18 6" /> : name === 'arrow' ? <path d="M4 12h15m-6-6 6 6-6 6" /> : name === 'download' ? <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" /> : <><path d="M3 11a9 9 0 1 1 2 7M3 4v7h7m2-5v6l4 2" /></>}
   </svg>;
+}
+
+function ExerciseProgress({ attempts, onViewAttempt, onBackToMusic }) {
+  const [exercise, setExercise] = useState(() => EXERCISE_TRACKS.find(({ id }) => exerciseProgress(attempts, id).points.length)?.id ?? 'squat');
+  const [variant, setVariant] = useState(() => exerciseProgress(attempts, 'squat').points.at(-1)?.attempt.variant ?? 'bodyweight');
+  const [selectedId, setSelectedId] = useState(null);
+  const [chartWidth, setChartWidth] = useState(760);
+  const chartRef = useRef(null);
+  const chartId = useId();
+  const track = EXERCISE_TRACKS.find(({ id }) => id === exercise);
+  const progress = exerciseProgress(attempts, exercise, exercise === 'squat' ? variant : undefined);
+  const hasPoints = progress.points.length > 0;
+  useLayoutEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const measure = () => {
+      const width = chart.getBoundingClientRect().width;
+      if (width > 0) setChartWidth(Math.round(width));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(chart);
+    return () => observer.disconnect();
+  }, [hasPoints]);
+  const points = progressCoordinates(progress.points, { width: chartWidth });
+  const selected = points.find(({ attempt }) => attempt.id === selectedId) ?? points.at(-1);
+  const line = points.map(({ x, y }) => `${x},${y}`).join(' ');
+  const change = progress.change;
+  function pointKey(event, index) {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onViewAttempt(points[index].attempt); return; }
+    const next = event.key === 'ArrowRight' ? Math.min(points.length - 1, index + 1)
+      : event.key === 'ArrowLeft' ? Math.max(0, index - 1)
+        : event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 : null;
+    if (next !== null) {
+      event.preventDefault();
+      setSelectedId(points[next].attempt.id);
+      event.currentTarget.parentNode.querySelector(`[data-progress-index="${next}"]`)?.focus();
+    }
+  }
+  return <section className={`exercise-progress tone-${tones[exercise]}`} aria-labelledby={`${chartId}-heading`}>
+    <div className="progress-heading"><div><h2 id={`${chartId}-heading`}>Your progress</h2><p>See what changes with every workout.</p></div>
+      <div className="progress-selectors"><label>Exercise<select value={exercise} onChange={(event) => { setExercise(event.target.value); setSelectedId(null); }}>{EXERCISE_TRACKS.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}</select></label>
+        {exercise === 'squat' && <label>Type<select value={variant} onChange={(event) => { setVariant(event.target.value); setSelectedId(null); }}><option value="bodyweight">Bodyweight</option><option value="barbell">Barbell</option></select></label>}</div>
+    </div>
+    {points.length ? <>
+      <dl className="progress-metrics"><div><dt>Latest score</dt><dd>{progressScore(progress.latest)}<small>/ 100</small></dd></div>
+        <div><dt>{attempts.length >= 100 ? 'Best in this history' : 'Best score'}</dt><dd>{progressScore(progress.best)}<small>/ 100</small></dd></div>
+        <div><dt>{attempts.length >= 100 ? 'Change in this history' : 'Since first workout'}</dt><dd className={change > 0 ? 'progress-improved' : ''}>{change === null ? '—' : `${change > 0 ? '+' : ''}${progressScore(change)}`}<small>{change === null ? 'One workout so far' : 'points'}</small></dd></div></dl>
+      <div className="progress-chart-wrap" ref={chartRef}><svg className="progress-chart" viewBox={`0 0 ${chartWidth} 232`} role="group" aria-labelledby={`${chartId}-title ${chartId}-description`}>
+        <title id={`${chartId}-title`}>{track.name} scores over time</title><desc id={`${chartId}-description`}>Form scores from 0 to 100. Use the left and right arrow keys to choose a workout, then Enter to open its review.</desc>
+        {[0, 25, 50, 75, 100].map((value) => <g key={value} className="progress-grid"><line x1="42" x2={chartWidth - 22} y1={200 - value * 1.78} y2={200 - value * 1.78} /><text x="29" y={204 - value * 1.78} textAnchor="end">{value}</text></g>)}
+        {points.length > 1 && <><polygon className="progress-area" points={`${points[0].x},200 ${line} ${points.at(-1).x},200`} /><polyline className="progress-line" points={line} /></>}
+        {points.map((point, index) => <g key={point.attempt.id} className="progress-point" data-progress-index={index} data-selected={point.attempt.id === selected.attempt.id} role="button" tabIndex={point.attempt.id === selected.attempt.id ? 0 : -1}
+          aria-label={`${dateLabel(point.time)}: ${progressScore(point.score)} out of 100${point.personalBest ? ', personal best' : ''}. Open workout review.`}
+          onFocus={() => setSelectedId(point.attempt.id)} onPointerEnter={() => setSelectedId(point.attempt.id)} onClick={() => onViewAttempt(point.attempt)} onKeyDown={(event) => pointKey(event, index)}>
+          <circle className="progress-point-hit" cx={point.x} cy={point.y} r="13" /><circle className="progress-point-dot" cx={point.x} cy={point.y} r="5" /><title>{shortDate(point.time)} · {progressScore(point.score)} / 100</title></g>)}
+        {points.length === 1 ? <text className="progress-date" x={points[0].x} y="224" textAnchor="middle">{shortDate(points[0].time)}</text> : <><text className="progress-date" x="42" y="224">{shortDate(points[0].time)}</text><text className="progress-date" x={chartWidth - 22} y="224" textAnchor="end">{shortDate(points.at(-1).time)}</text></>}
+      </svg></div>
+      <div className="progress-selected"><div aria-live="polite"><strong>{progressScore(selected.score)}<small> / 100</small></strong><span>{dateLabel(selected.time)}{selected.personalBest ? ' · Personal best' : ''}</span></div><button className="plain-button" onClick={() => onViewAttempt(selected.attempt)}>Review workout <HistoryIcon name="arrow" size={17} /></button></div>
+      {points.length === 1 && <p className="progress-first">Your starting point is saved. Complete another {track.name.toLowerCase()} workout to see your trend.</p>}
+    </> : <div className="progress-empty"><HistoryIcon name="history" size={26} /><h3>A starting point for your {track.name.toLowerCase()}</h3><p>Complete a camera or video workout to see your first score here. Each finished workout adds to your progress.</p><button className="raised-button small" onClick={onBackToMusic}>Find an exercise <HistoryIcon name="arrow" size={16} /></button></div>}
+    <p className="progress-footnote">Completed camera and video workouts only. Examples and incomplete attempts stay in your history below.{attempts.length >= 100 ? ' Based on your latest 100 saved attempts.' : ''}</p>
+  </section>;
 }
 
 export function HistoryPanel({ user, attempts, onSignIn, onBackToMusic, onViewAttempt }) {
@@ -23,6 +95,7 @@ export function HistoryPanel({ user, attempts, onSignIn, onBackToMusic, onViewAt
     && (outcome === 'all' || attemptOutcome(attempt).filter === outcome));
   function clearFilters() { setExercise('all'); setOutcome('all'); }
   return <section className="history-panel practice-library" aria-label="Saved attempts">
+    {user && <ExerciseProgress key={user.id} attempts={attempts} onViewAttempt={onViewAttempt} onBackToMusic={onBackToMusic} />}
     <div className="history-heading"><div><h2>Practice history</h2><p>Every attempt is a step forward.</p></div><span aria-live="polite">{shown.length}{shown.length !== attempts.length ? ` of ${attempts.length}` : ''} {attempts.length === 1 ? 'attempt' : 'attempts'}</span></div>
     {user && attempts.length > 0 && <div className="history-filters">
       <label>Exercise<select value={exercise} onChange={(event) => setExercise(event.target.value)}><option value="all">All exercises</option>{EXERCISE_TRACKS.map((track) => <option key={track.id} value={track.id}>{track.name}</option>)}</select></label>

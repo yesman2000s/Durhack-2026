@@ -7,7 +7,8 @@
     "dev": "vite --host localhost",
     "build": "vite build",
     "preview": "vite preview --host localhost",
-    "test": "node --test"
+    "test": "node --test",
+    "seed:unlocked": "node scripts/create-unlocked-account.mjs"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.78.0",

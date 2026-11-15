@@ -18,6 +18,19 @@ function oppositeSide(points) {
 
 const fixtures = [
   ...EXERCISES.map((exercise) => ({ exercise, name: exercise, expectedSide: 'left' })),
+  ...EXERCISES.map((exercise) => ({
+    exercise, name: `${exercise} fast single-peak reversal`, expectedSide: 'left',
+    progress: (elapsed) => elapsed < 0 ? 0 : [0, 0.15, 0.2, 0.4, 0.2, 0.15, 0][Math.floor(elapsed / 83)] ?? 0,
+  })),
+  ...EXERCISES.map((exercise) => ({
+    exercise, name: `${exercise} brief finish jitter`, expectedSide: 'left',
+    progress: (elapsed) => elapsed < 0 ? 0 : Math.floor(elapsed / 83) === 9 ? exercise === 'push-up' ? 0.03 : 0.09
+      : [0, 0.15, 0.2, 0.4, 0.2, 0.15, 0][Math.floor(elapsed / 83)] ?? 0,
+  })),
+  ...EXERCISES.map((exercise) => ({
+    exercise, name: `${exercise} finish hold after occlusion`, expectedSide: 'left', loss: [4565, 4814],
+    progress: (elapsed) => elapsed < 0 ? 0 : [0, 0.15, 0.2, 0.4, 0.2, 0.15, 0][Math.floor(elapsed / 83)] ?? 0,
+  })),
   { exercise: 'push-up', name: 'mirrored floor push-up', adjust: oppositeSide, expectedSide: 'right' },
   {
     exercise: 'push-up', name: 'soft-elbow personal top position', expectedSide: 'left',

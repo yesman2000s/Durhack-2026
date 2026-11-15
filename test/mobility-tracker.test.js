@@ -334,3 +334,68 @@ test('keeps comfortable reps through oblique projection and naturally changing l
     assert.ok(!events.some(({ type }) => type === 'rep-discarded'), exercise);
   }
 });
+
+function runQuickRep(exercise, { amounts = [0, 0.15, 0.2, 0.4, 0.2, 0.15, 0], side = 'left', adjust, miss = [] } = {}) {
+  const tracker = new MobilityTracker(exercise);
+  const events = [];
+  for (let timestampMs = 0; timestampMs <= 3200; timestampMs += 80) {
+    let amount = timestampMs < 1440 ? 0 : amounts[(timestampMs - 1440) / 80] ?? 0;
+    amount = adjust?.(amount, timestampMs) ?? amount;
+    const landmarks = miss.includes(timestampMs) ? null : landmarksFor(exercise, amount, { side });
+    events.push(...tracker.update({ landmarks, timestampMs, width: WIDTH, height: HEIGHT }).events);
+  }
+  return events;
+}
+
+test('recognizes a fast mobility rep with one clear peak and observed travel on both sides', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    for (const side of ['left', 'right']) {
+      const events = runQuickRep(exercise, { side });
+      const completed = events.filter(({ type }) => type === 'rep-complete');
+      assert.equal(completed.length, 1, `${exercise} ${side}`);
+      const { rep } = completed[0];
+      assert.equal(rep.side, side);
+      assert.equal(rep.returnedAtMs, 1920);
+      assert.equal(rep.finishedAtMs, 2320);
+      assert.deepEqual(rep.frames.map(({ phase }) => phase), ['start', 'descent', 'bottom', 'ascent', 'finish']);
+      assert.equal(rep.frames.find(({ phase }) => phase === 'bottom').timestampMs, 1680);
+      assert.ok(!events.some(({ type }) => type === 'rep-discarded'));
+    }
+  }
+});
+
+test('a single peak cannot replace missing outward or return motion evidence', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    for (const amounts of [
+      [0, 0, 0, 0.4, 0.2, 0.15, 0],
+      [0, 0.15, 0.2, 0.4, 0, 0, 0],
+      [0, 0, 0, 0.4, 0, 0, 0],
+      [0, 0.15, 0.2, 0.2, 0.15, 0, 0],
+    ]) {
+      assert.ok(!runQuickRep(exercise, { amounts }).some(({ type }) => type === 'rep-complete'), `${exercise}: ${amounts}`);
+    }
+  }
+});
+
+test('brief return-angle jitter preserves observed finish time without counting the unsteady interval', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    const events = runQuickRep(exercise, { adjust: (amount, time) => time === 2160 ? exercise === 'push-up' ? 0.15 : 0.1 : amount });
+    const rep = events.find(({ type }) => type === 'rep-complete')?.rep;
+    assert.ok(rep, exercise);
+    assert.equal(rep.returnedAtMs, 1920, exercise);
+    // The unstable sample and its next interval add no hold time.
+    assert.equal(rep.finishedAtMs, 2480, exercise);
+  }
+});
+
+test('a longer finish occlusion needs a fresh observed return hold', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    const events = runQuickRep(exercise, { miss: [2080, 2160, 2240] });
+    const rep = events.find(({ type }) => type === 'rep-complete')?.rep;
+    assert.ok(rep, exercise);
+    assert.equal(rep.returnedAtMs, 2320, exercise);
+    assert.equal(rep.finishedAtMs, 2720, exercise);
+    assert.equal(rep.metrics.maxTrackingGapMs, 320);
+    assert.ok(rep.metrics.validFrameFraction < 1);
+  }
+});
