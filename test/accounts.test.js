@@ -197,7 +197,14 @@ test('a MongoDB sync retry preserves every score and credits only personal bests
     const attempt = await h.start({ level });
     await h.review(attempt, `progress-${index}`, score);
     if (index === 0) {
-      assert.equal((await h.finish(attempt)).statusCode, 503);
+      const pending = await h.finish(attempt);
+      assert.equal(pending.statusCode, 200);
+      assert.equal(pending.body.attempt.passed, true);
+      assert.equal(pending.body.progress.scoreSyncPending, true);
+      const progress = await h.call('/api/progress');
+      assert.equal(progress.statusCode, 200);
+      assert.equal(progress.body.scoreSyncPending, true);
+      assert.equal(progress.body.tracks[0].personalBests, 1);
       fail = false;
     }
     const finished = await h.finish(attempt);
@@ -206,6 +213,7 @@ test('a MongoDB sync retry preserves every score and credits only personal bests
     assert.deepEqual((await h.finish(attempt)).body, finished.body);
   }
   const progress = (await h.call('/api/progress')).body;
+  assert.equal(progress.scoreSyncPending, undefined);
   assert.equal(progress.tracks[0].personalBests, 3);
   assert.equal(progress.tracks[0].bestScore, 71);
   assert.equal(progress.tracks[0].completedLevels, 3);

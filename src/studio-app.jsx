@@ -112,6 +112,7 @@ function StudioApp() {
   const [tab, setTab] = useState('studio'), [authOpen, setAuthOpen] = useState(false), [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [attempts, setAttempts] = useState([]), [viewAttempt, setViewAttempt] = useState(null);
+  const [scoreSyncPending, setScoreSyncPending] = useState(false);
   const [notice, setNotice] = useState(''), [error, setError] = useState(''), [saving, setSaving] = useState(false);
   const accountGeneration = useRef(0);
   const accountIdentity = useRef(null);
@@ -139,12 +140,13 @@ function StudioApp() {
       if (accountIdentity.current !== (identity.user?.id ?? null)) {
         accountVersion.current++; selectionTouched.current = false; settingsPending.current = false; setSaving(false);
         accountIdentity.current = identity.user?.id ?? null;
-        setViewAttempt(null); setTracks(emptyTracks()); setSettings(EMPTY_SETTINGS); setAttempts([]); stopMusic();
+        setViewAttempt(null); setTracks(emptyTracks()); setSettings(EMPTY_SETTINGS); setAttempts([]); setScoreSyncPending(false); stopMusic();
       }
       setUser(identity.user);
       if (identity.user) {
         const [data, history] = await Promise.all([api('/api/progress'), api('/api/attempts')]);
         if (generation !== accountGeneration.current) return;
+        setScoreSyncPending(Boolean(data.scoreSyncPending));
         setTracks(data.tracks); if (!settingsPending.current && revision === settingsRevision.current) setSettings(data.settings); setAttempts(history.attempts);
         if (!selectionTouched.current) {
           const nextTrack = data.tracks.find((track) => track.target);
@@ -223,6 +225,7 @@ function StudioApp() {
     <main className="studio-main">
       {tab === 'history' && <div className="studio-intro"><div><h1>Your attempts</h1><p>Your scores, coaching and saved recordings.</p></div></div>}
       {error && <div className="studio-alert" role="alert">{error}<button onClick={loadAccount} className="plain-button">Try again</button></div>}
+      {user && scoreSyncPending && <div className="studio-alert" role="status">Workout scores are saved on this server. MongoDB sync is pending.<button onClick={loadAccount} className="plain-button">Retry sync</button></div>}
       {!ready && <p className="loading-account" role="status">Opening your studio…</p>}
       {tab === 'studio' ? <div className="studio-workspace arrangement-workspace">
         <ArrangementEditor song={currentSong} tracks={tracks} positions={settings.positions} mutedNotes={settings.mutedNotes}

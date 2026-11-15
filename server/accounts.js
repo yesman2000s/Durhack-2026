@@ -30,12 +30,13 @@ async function readJson(req) {
 
 export function createAccountService({ store = createAccountStore(), mongoWorkouts, now = () => Date.now() } = {}) {
   const limits = new Map();
-  async function syncWorkouts(userId) {
-    if (!mongoWorkouts) return;
+  async function syncProgress(userId, progress) {
+    if (!mongoWorkouts) return progress;
     try {
       await mongoWorkouts.sync(userId, store.scoredWorkouts);
+      return progress;
     } catch {
-      throw new HttpError(503, 'Workout scores could not sync to MongoDB. Try again shortly.');
+      return { ...progress, scoreSyncPending: true };
     }
   }
   function requireUser(req) {
@@ -84,9 +85,7 @@ export function createAccountService({ store = createAccountStore(), mongoWorkou
       }
       const user = requireUser(req);
       if (path === '/api/progress' && req.method === 'GET') {
-        const progress = store.progress(user.id);
-        await syncWorkouts(user.id);
-        return send(progress);
+        return send(await syncProgress(user.id, store.progress(user.id)));
       }
       if (path === '/api/settings' && ['POST', 'PATCH'].includes(req.method)) {
         return send({ settings: store.saveSettings(user.id, await readJson(req)) });
@@ -98,8 +97,7 @@ export function createAccountService({ store = createAccountStore(), mongoWorkou
       if (match?.[2] && req.method === 'POST') {
         const input = await readJson(req);
         const result = store.finishAttempt(user.id, match[1], input.reason ?? 'completed');
-        await syncWorkouts(user.id);
-        return send(result);
+        return send({ ...result, progress: await syncProgress(user.id, result.progress) });
       }
       return send({ error: 'This account endpoint or method is unavailable.' }, 405);
     } catch (error) {

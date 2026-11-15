@@ -1,7 +1,7 @@
 import { MongoClient } from 'mongodb';
 
 export function createMongoWorkouts(uri, database = 'compose') {
-  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 4000 });
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 4000, timeoutMS: 6000 });
   const collection = client.db(database).collection('workout_scores');
   let index;
 
