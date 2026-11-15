@@ -10,14 +10,14 @@ export const EXERCISES = {
   },
   'push-up': {
     title: 'Push-up',
-    setup: 'Set the camera low enough to show your hands, head, and toes. Start in a high plank, side-on, with your palms and toes on the floor.',
-    framing: 'Show your hands, head, and toes from the side.',
-    start: 'Hold a high plank',
+    setup: 'Show your hands, head, and feet from roughly the side. Hold your comfortable top position with your palms and toes on the floor; your elbows do not need to lock straight.',
+    framing: 'Keep your hands, head, and feet visible, roughly side-on.',
+    start: 'Hold your top position',
     action: 'Lower your chest toward the floor, then press back up and hold briefly.',
     phases: { start: 'High plank', descent: 'Lowering', bottom: 'Lowest point', ascent: 'Pressing up', finish: 'High plank again' },
     rangeLabel: 'Elbow bend',
     reference: 'https://www.nasm.org/resource-center/exercise-library/push-up',
-    guidance: ['Begin with straight arms, palms on the floor, and your legs extended behind you.', 'Bend your elbows and lower your chest while keeping your hips in line with your shoulders and ankles.', 'Press back to a high plank and hold briefly.'],
+    guidance: ['Begin near the top with your palms on the floor and your legs extended behind you. A slight elbow bend is okay.', 'Hold still briefly so the camera can learn your starting position.', 'Lower through a comfortable range, then press back to your starting position and hold briefly.'],
   },
   'knee-raise': {
     title: 'Knee raise',

@@ -153,10 +153,13 @@ def _point_at(landmarks, index, width, height):
     point = landmarks[index]
     getter = point.get if isinstance(point, dict) else lambda name, default: getattr(point, name, default)
     x, y = getter("x", None), getter("y", None)
-    visibility = getter("visibility", 1)
-    if x is None or y is None or not isfinite(x) or not isfinite(y):
+    if not all(isinstance(value, (int, float)) and isfinite(value) for value in (x, y)):
         return None
-    return Point(x * width, y * height, 1 if visibility is None else visibility)
+    estimates = [getter(name, None) for name in ("visibility", "presence")]
+    estimates = [1 if value is None else value for value in estimates]
+    confidence = (_clamp(min(estimates), 0, 1)
+                  if all(isinstance(value, (int, float)) and isfinite(value) for value in estimates) else 0)
+    return Point(x * width, y * height, confidence)
 
 
 def _inspect_pose(landmarks, width, height, fixed_side, baseline, tracking=False):
@@ -443,7 +446,7 @@ class SquatTracker:
             }
 
         if (not isfinite(timestamp_ms) or (self.last_time is not None and timestamp_ms <= self.last_time)
-                or width <= 0 or height <= 0):
+                or not isfinite(width) or not isfinite(height) or width <= 0 or height <= 0):
             return state("Waiting for the next camera frame.")
         previous_frame_time = self.last_time
         self.last_time = timestamp_ms

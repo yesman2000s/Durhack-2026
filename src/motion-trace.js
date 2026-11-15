@@ -17,7 +17,8 @@ export function traceJoints(landmarks, side) {
     return [[name, {
       x: +point.x.toFixed(4),
       y: +point.y.toFixed(4),
-      visibility: Number.isFinite(point.visibility) ? +point.visibility.toFixed(3) : null,
+      visibility: point.visibility == null ? null : Number.isFinite(point.visibility) ? +point.visibility.toFixed(3) : 0,
+      ...(point.presence != null ? { presence: Number.isFinite(point.presence) ? +point.presence.toFixed(3) : 0 } : {}),
     }]];
   }));
 }
@@ -56,7 +57,7 @@ const coreJoints = new Set(['hip', 'knee', 'ankle', 'shoulder']);
 
 export function isPlaybackJointVisible(name, point) {
   const cutoff = coreJoints.has(name) ? 0.35 : 0.55;
-  return point && (point.visibility ?? 1) >= cutoff
+  return point && [point.visibility ?? 1, point.presence ?? 1].every((value) => Number.isFinite(value) && value >= cutoff)
     && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1;
 }
 
@@ -123,6 +124,8 @@ export function poseAtTime(frames, time) {
       x: smoothCoordinate(point.x, target.x, prior?.x, following?.x, beforeMs, gap, afterMs, fraction),
       y: smoothCoordinate(point.y, target.y, prior?.y, following?.y, beforeMs, gap, afterMs, fraction),
       visibility: Math.min(point.visibility ?? 1, target.visibility ?? 1),
+      ...(point.presence != null || target.presence != null
+        ? { presence: Math.min(point.presence ?? 1, target.presence ?? 1) } : {}),
     };
   }
   return Object.keys(joints).length ? joints : null;

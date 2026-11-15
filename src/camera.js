@@ -5,6 +5,7 @@ import fallbackLoader from '../node_modules/@mediapipe/tasks-vision/wasm/vision_
 import fallbackBinary from '../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm?url';
 import { centerCameraCrop, poseCameraCrop, sourceLandmarks } from './camera-crop.js';
 import { nextPoseSampleTime, POSE_SAMPLE_INTERVAL_MS } from './pose-cadence.js';
+import { copyCameraFrame } from './camera-frame.js';
 
 const stalledVideoMs = 200;
 const modelAssetPath = `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`;
@@ -40,6 +41,7 @@ function describeCameraError(error) {
 export function createCamera(video, { onFrame, onError, initialExercise = 'squat' }) {
   let active = null;
   let exercise = initialExercise;
+  const frameCanvas = document.createElement('canvas');
   const cropCanvas = document.createElement('canvas');
   const cropContext = cropCanvas.getContext('2d', { alpha: false });
 
@@ -89,14 +91,16 @@ export function createCamera(video, { onFrame, onError, initialExercise = 'squat
       session.nextSampleAt ??= timestampMs;
       if (timestampMs + 4 >= session.nextSampleAt) {
         try {
+          const capturedFrame = copyCameraFrame(video, width, height, frameCanvas);
+          if (!capturedFrame) throw new Error('The camera frame could not be read.');
           const wideView = exercise === 'push-up';
           const crop = wideView ? { left: 0, width } : centerCameraCrop(width, height);
           const modelCrop = !wideView && cropContext ? poseCameraCrop(width, height) : { left: 0, width };
-          let inferenceSource = video;
+          let inferenceSource = capturedFrame;
           if (modelCrop.width < width) {
             if (cropCanvas.width !== modelCrop.width) cropCanvas.width = modelCrop.width;
             if (cropCanvas.height !== height) cropCanvas.height = height;
-            cropContext.drawImage(video, modelCrop.left, 0, modelCrop.width, height, 0, 0, modelCrop.width, height);
+            cropContext.drawImage(capturedFrame, modelCrop.left, 0, modelCrop.width, height, 0, 0, modelCrop.width, height);
             inferenceSource = cropCanvas;
           }
           const result = session.landmarker.detectForVideo(inferenceSource, timestampMs);
@@ -109,7 +113,7 @@ export function createCamera(video, { onFrame, onError, initialExercise = 'squat
             width,
             height,
             crop,
-            video,
+            video: capturedFrame,
           });
         } catch (error) {
           fail(session, new Error('Pose tracking stopped. Restart the camera to try again.', { cause: error }));

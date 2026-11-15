@@ -73,6 +73,7 @@ class Pose:
     thigh_angle: float
     trusted_toe: Point | None
     paired_foot: Foot | None
+    segment_lengths: tuple[float, ...]
     time: float = 0
 
 
@@ -137,8 +138,11 @@ def _point_at(landmarks, index, width, height):
     x, y = get("x"), get("y")
     if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isfinite(x) or not isfinite(y):
         return None
-    visibility = get("visibility")
-    return Point(x * width, y * height, 1 if visibility is None else visibility)
+    estimates = [get(name) for name in ("visibility", "presence")]
+    estimates = [1 if value is None else value for value in estimates]
+    confidence = (max(0, min(1, *estimates))
+                  if all(isinstance(value, (int, float)) and isfinite(value) for value in estimates) else 0)
+    return Point(x * width, y * height, confidence)
 
 
 def _body_side(landmarks, offset, width, height):
@@ -181,11 +185,19 @@ def _inspect(landmarks, width, height, exercise, reference, preferred_side):
     leg_length = thigh_length + shin_length
     torso_length = _distance(shoulder, hip)
     arm_length = 0
+    segment_lengths = [thigh_length, shin_length, torso_length]
     if push_up:
         upper_arm, forearm = _distance(shoulder, elbow), _distance(elbow, wrist)
         arm_length = upper_arm + forearm
+        segment_lengths.extend((upper_arm, forearm))
         if min(upper_arm, forearm) < height * 0.025:
             return None, "joints", False
+    if exercise == "heel-raise":
+        segment_lengths.append(_distance(heel, toe))
+    changed_shape = reference and any(
+        not 0.40 * initial <= length <= 1.85 * initial
+        for length, initial in zip(segment_lengths, reference.segment_lengths, strict=True)
+    )
     if (min(thigh_length, shin_length, torso_length) < height * 0.035
             or (reference and not 0.60 * reference.leg_length <= leg_length <= 1.45 * reference.leg_length)):
         return None, "joints", False
@@ -212,11 +224,12 @@ def _inspect(landmarks, width, height, exercise, reference, preferred_side):
 
     shoulder_span, hip_span = span("shoulder"), span("hip")
     if reference:
-        profile = not ((hip_span or 0) > 0.40 or ((hip_span or 0) > 0.30 and (shoulder_span or 0) > 0.40))
+        profile = (not ((hip_span or 0) > 0.44 or ((hip_span or 0) > 0.36 and (shoulder_span or 0) > 0.55))
+                   if push_up else not ((hip_span or 0) > 0.40 or ((hip_span or 0) > 0.30 and (shoulder_span or 0) > 0.40)))
     elif shoulder_span is not None and hip_span is not None:
-        profile = shoulder_span <= 0.40 and hip_span <= 0.29
+        profile = shoulder_span <= (0.50 if push_up else 0.40) and hip_span <= (0.35 if push_up else 0.29)
     elif shoulder_span is not None or hip_span is not None:
-        profile = (hip_span if hip_span is not None else shoulder_span) <= 0.23
+        profile = (hip_span if hip_span is not None else shoulder_span) <= (0.30 if push_up else 0.23)
     else:
         profile = abs(nose.x - shoulder.x) >= leg_length * 0.09
     if not profile:
@@ -235,29 +248,33 @@ def _inspect(landmarks, width, height, exercise, reference, preferred_side):
     if exercise == "heel-raise" and all(_confidence(far[key]) >= 0.55 and fits(far[key]) for key in ("ankle", "heel", "toe")):
         if leg_length * 0.045 <= _distance(far["heel"], far["toe"]) <= leg_length * 0.40:
             paired_foot = Foot(far["heel"], far["toe"])
-    return Pose(side_name, shoulder, hip, knee, ankle, heel, toe, wrist, support, direction, leg_length, arm_length,
+    observation = Pose(side_name, shoulder, hip, knee, ankle, heel, toe, wrist, support, direction, leg_length, arm_length,
                 _angle(hip, knee, ankle), degrees(atan2(abs(shoulder.x - hip.x), hip.y - shoulder.y)),
                 _angle(shoulder, hip, knee), degrees(atan2(abs(knee.x - ankle.x), ankle.y - knee.y)),
                 _angle(shoulder, elbow, wrist) if push_up else None,
                 degrees(atan2(direction * (knee.x - hip.x), knee.y - hip.y)),
-                trusted_toe, paired_foot), None, True
+                trusted_toe, paired_foot, tuple(segment_lengths))
+    if changed_shape and not _movement(observation, reference, exercise, 0).shifted:
+        return None, "joints", False
+    return observation, None, True
 
 
-def _push_up_plank(pose, angle_floor):
+def _push_up_plank(pose, knee_floor, hip_floor):
     leg = pose.leg_length
     floor = pose.trusted_toe or pose.ankle
-    return (pose.direction * (pose.shoulder.x - pose.ankle.x) >= leg * 1.10
-            and pose.direction * (pose.hip.x - pose.ankle.x) >= leg * 0.60
-            and pose.direction * (pose.shoulder.x - pose.hip.x) >= leg * 0.32
-            and abs(pose.wrist.y - floor.y) <= leg * (0.26 if pose.trusted_toe else 0.37)
-            and pose.knee_angle >= angle_floor and pose.hip_angle >= angle_floor)
+    return (pose.direction * (pose.shoulder.x - pose.ankle.x) >= leg * 0.95
+            and pose.direction * (pose.hip.x - pose.ankle.x) >= leg * 0.50
+            and pose.direction * (pose.shoulder.x - pose.hip.x) >= leg * 0.22
+            and abs(pose.wrist.y - floor.y) <= leg * (0.34 if pose.trusted_toe else 0.43)
+            and pose.knee_angle >= knee_floor and pose.hip_angle >= hip_floor)
 
 
 def _starting_position(pose, exercise):
     if exercise == "push-up":
-        return (_push_up_plank(pose, 145) and pose.elbow_angle >= 145
-                and pose.wrist.y - pose.shoulder.y >= pose.arm_length * 0.69
-                and abs(pose.wrist.x - pose.shoulder.x) <= pose.arm_length * 0.52)
+        # Calibrate to a steady personal top, allowing soft elbows and projection.
+        return (_push_up_plank(pose, 140, 135) and pose.elbow_angle >= 130
+                and pose.wrist.y - pose.shoulder.y >= pose.arm_length * 0.52
+                and abs(pose.wrist.x - pose.shoulder.x) <= pose.arm_length * 0.78)
     if not pose.direction or pose.knee_angle < 145 or pose.knee.y - pose.hip.y < 0.30 * pose.leg_length:
         return False
     if pose.torso_lean > 30 or abs(pose.thigh_angle) > 20:
@@ -274,7 +291,7 @@ def _movement(pose, start, exercise, timestamp):
     if exercise == "push-up":
         drop = ((start.wrist.y - start.shoulder.y) - (pose.wrist.y - pose.shoulder.y)) / start.arm_length
         hip_drop = ((pose.hip.y - pose.ankle.y) - (start.hip.y - start.ankle.y)) / leg
-        plank = _push_up_plank(pose, 135)
+        plank = _push_up_plank(pose, 130, 125)
         foot_moved = (_distance(pose.trusted_toe, start.trusted_toe) > leg * 0.20
                       if pose.trusted_toe and start.trusted_toe
                       else abs(pose.ankle.x - start.ankle.x) > leg * 0.23)
@@ -400,7 +417,8 @@ class MobilityTracker:
                     "live": live, "events": events, "continuitySide": None}
 
         last_at = self.last_at if self.last_at is not None else -inf
-        if not isfinite(timestamp) or timestamp <= last_at or not (width > 0 and height > 0):
+        if (not isfinite(timestamp) or timestamp <= last_at or not isfinite(width) or not isfinite(height)
+                or not (width > 0 and height > 0)):
             return state("Waiting for the next camera frame.")
         self.last_at = timestamp
         if not armed and self.rep:
@@ -451,7 +469,7 @@ class MobilityTracker:
                 return state("Side view ready.", self._live(pose, 0), True)
             self.phase = "setup"
             return state("Hold your starting position." if checks["standing"] else
-                         "Start in a high plank with your arms extended." if self.exercise == "push-up" else
+                         "Hold your top push-up position; a slight elbow bend is okay." if self.exercise == "push-up" else
                          "Move into the starting position.")
 
         start = self.reference

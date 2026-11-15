@@ -41,7 +41,7 @@ MODEL_PATH = Path(__file__).resolve().parents[1] / "public" / "models" / "pose_l
 WINDOW = "COMPOSE - Movement Camera"
 PREVIEW_CROP_WIDTH_PER_HEIGHT = 0.95
 POSE_CROP_WIDTH_PER_HEIGHT = 1.25
-CENTERED_BODY_MARGIN = 0.175
+CENTERED_BODY_MARGIN = 0.08
 COUNTDOWN_MS = 2000
 POSE_INTERVAL_MS = 1000 / 12
 OVERLAY_LOSS_MS = 240
@@ -153,6 +153,18 @@ def detect_centered_pose(detector, frame: np.ndarray, timestamp_ms: int, exercis
     return landmarks
 
 
+def _confidence_value(value):
+    return 1 if value is None else value if isinstance(value, (int, float)) and isfinite(value) else 0
+
+
+def _point_confidence(point):
+    if point is None:
+        return 0
+    values = (point.get(name) if isinstance(point, dict) else getattr(point, name, None)
+              for name in ("visibility", "presence"))
+    return min(_confidence_value(value) for value in values)
+
+
 def pose_within_center(landmarks, width: int, height: int, exercise="squat") -> bool:
     left, crop_width = center_crop_bounds(width, height, exercise=exercise)
     if crop_width == width or not landmarks:
@@ -160,9 +172,9 @@ def pose_within_center(landmarks, width: int, height: int, exercise="squat") -> 
 
     pairs = ((landmarks[23], landmarks[27]), (landmarks[24], landmarks[28]))
     candidates = [
-        (hip.visibility + ankle.visibility, (hip.x + ankle.x) / 2)
+        (_point_confidence(hip) + _point_confidence(ankle), (hip.x + ankle.x) / 2)
         for hip, ankle in pairs
-        if (hip.visibility or 0) >= 0.55 and (ankle.visibility or 0) >= 0.55 and isfinite(hip.x) and isfinite(ankle.x)
+        if _point_confidence(hip) >= 0.55 and _point_confidence(ankle) >= 0.55 and isfinite(hip.x) and isfinite(ankle.x)
     ]
     if not candidates:
         return True
@@ -177,7 +189,8 @@ def pose_joints(landmarks, side, indices=POSE_JOINTS):
         name: {
             "x": point.x,
             "y": point.y,
-            "visibility": point.visibility if point.visibility is not None and isfinite(point.visibility) else None,
+            "visibility": _confidence_value(point.visibility) if point.visibility is not None else None,
+            **({"presence": _confidence_value(point.presence)} if getattr(point, "presence", None) is not None else {}),
         }
         for name, index in indices.items()
         if isfinite((point := landmarks[index + (offset if index else 0)]).x) and isfinite(point.y)
@@ -186,7 +199,7 @@ def pose_joints(landmarks, side, indices=POSE_JOINTS):
 
 def thigh_to_shin_ratio(joints, width, height):
     leg = [joints.get(name) for name in ("hip", "knee", "ankle")]
-    if not all(point and (point["visibility"] is None or point["visibility"] >= 0.35) for point in leg):
+    if not all(_point_confidence(point) >= 0.35 for point in leg):
         return None
     hip, knee, ankle = leg
 
@@ -213,6 +226,7 @@ def motion_sample(landmarks, live, timestamp_ms, width, height, exercise="squat"
             name: {
                 "x": round(point["x"], 4), "y": round(point["y"], 4),
                 "visibility": round(point["visibility"], 3) if point["visibility"] is not None else None,
+                **({"presence": round(point["presence"], 3)} if "presence" in point else {}),
             }
             for name, point in joints.items()
         },
@@ -239,7 +253,7 @@ def visible_motion_joints(joints):
     return {
         name: point for name, point in joints.items()
         if 0 <= point["x"] <= 1 and 0 <= point["y"] <= 1
-        and (point["visibility"] if point["visibility"] is not None else 1) >= thresholds.get(name, 0.55)
+        and _point_confidence(point) >= thresholds.get(name, 0.55)
     }
 
 
@@ -292,9 +306,12 @@ def replay_joints_at(frames, offset_ms):
     later = visible_motion_joints(following["joints"]) if 0 < following_gap <= MOTION_SAMPLE_GAP_MS else {}
     return {
         name: {
-            axis: _replay_coordinate(point[axis], second[name][axis], earlier.get(name, {}).get(axis),
+            **{axis: _replay_coordinate(point[axis], second[name][axis], earlier.get(name, {}).get(axis),
                                      later.get(name, {}).get(axis), gap, previous_gap, following_gap, t)
-            for axis in ("x", "y")
+               for axis in ("x", "y")},
+            "visibility": min(_confidence_value(point.get("visibility")), _confidence_value(second[name].get("visibility"))),
+            **({"presence": min(_confidence_value(point.get("presence")), _confidence_value(second[name].get("presence")))}
+               if "presence" in point or "presence" in second[name] else {}),
         }
         for name, point in first.items() if name in second
     }
@@ -314,7 +331,7 @@ class LiveOverlay:
         if not landmarks or side is None:
             return
         points = tuple(
-            SimpleNamespace(x=point.x, y=point.y, visibility=point.visibility)
+            SimpleNamespace(x=point.x, y=point.y, visibility=point.visibility, presence=getattr(point, "presence", None))
             for point in landmarks
         )
         rendered, previous_side = self.at(timestamp_ms)
@@ -336,14 +353,15 @@ class LiveOverlay:
         points = tuple(
             SimpleNamespace(x=before.x + (after.x - before.x) * alpha,
                             y=before.y + (after.y - before.y) * alpha,
-                            visibility=after.visibility)
+                            visibility=min(_confidence_value(before.visibility), _confidence_value(after.visibility)),
+                            presence=min(_confidence_value(before.presence), _confidence_value(after.presence)))
             for before, after in zip(self.origin, self.target)
         )
         return points, self.side
 
 
 def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: dict | None,
-                     max_edge=960, exercise="squat") -> dict | None:
+                     max_edge=1280, exercise="squat") -> dict | None:
     source_height, source_width = frame.shape[:2]
     height, width = source_height, source_width
     scale = min(1, max_edge / max(width, height))
@@ -351,7 +369,7 @@ def capture_snapshot(frame: np.ndarray, timestamp_ms: float, landmarks, live: di
         if scale < 1:
             width, height = max(1, round(width * scale)), max(1, round(height * scale))
             frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 84])
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
     except cv2.error:
         return None
     if not ok:
@@ -792,7 +810,7 @@ def draw_pose(frame: np.ndarray, landmarks, side: str | None, tracking: bool, cr
         elif tracking and ((exercise == "push-up" and 13 <= index <= 16)
                            or (exercise == "heel-raise" and 29 <= index <= 32)):
             threshold = 0.38
-        return (point.visibility or 0) >= threshold and crop_left <= point.x <= crop_left + crop_width and 0 <= point.y <= 1
+        return _point_confidence(point) >= threshold and crop_left <= point.x <= crop_left + crop_width and 0 <= point.y <= 1
 
     def pixel(point):
         return (round((point.x - crop_left) / crop_width * width), round(point.y * height))
@@ -847,28 +865,102 @@ def draw_training_overlay(preview, session, timestamp_ms, crop_left, crop_width,
     return True
 
 
+def _training_limb(mask, start, end, start_radius, end_radius):
+    """Join rounded, tapered body sections into one silhouette mask."""
+    ax, ay = start
+    bx, by = end
+    length = hypot(bx - ax, by - ay)
+    if length > 0:
+        nx, ny = -(by - ay) / length, (bx - ax) / length
+        polygon = np.rint([
+            (ax + nx * start_radius, ay + ny * start_radius),
+            (bx + nx * end_radius, by + ny * end_radius),
+            (bx - nx * end_radius, by - ny * end_radius),
+            (ax - nx * start_radius, ay - ny * start_radius),
+        ]).astype(np.int32)
+        cv2.fillConvexPoly(mask, polygon, 255, cv2.LINE_AA)
+    cv2.circle(mask, start, max(1, round(start_radius)), 255, -1, cv2.LINE_AA)
+    cv2.circle(mask, end, max(1, round(end_radius)), 255, -1, cv2.LINE_AA)
+
+
+def _paint_training_silhouette(preview, mask, opacity, outline_opacity, line_width):
+    x, y, width, height = cv2.boundingRect(mask)
+    if not width or not height:
+        return
+    padding = line_width + 3
+    left, top = max(0, x - padding), max(0, y - padding)
+    right, bottom = min(preview.shape[1], x + width + padding), min(preview.shape[0], y + height + padding)
+    region = preview[top:bottom, left:right]
+    coverage = mask[top:bottom, left:right]
+    # Blend only the body's bounds, keeping the live camera render inexpensive.
+    layer = region.copy()
+    layer[coverage > 0] = GUIDE_BAR
+    cv2.addWeighted(layer, opacity, region, 1 - opacity, 0, region)
+    # Outline the union so overlapping limbs do not look like disconnected bones.
+    contours, _ = cv2.findContours(coverage, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    layer[:] = region
+    cv2.drawContours(layer, contours, -1, POSE_OUTLINE, line_width + 2, cv2.LINE_AA)
+    cv2.drawContours(layer, contours, -1, GUIDE_BAR, line_width, cv2.LINE_AA)
+    cv2.addWeighted(layer, outline_opacity, region, 1 - outline_opacity, 0, region)
+
+
 def draw_training_pose(preview, anchor, progress, exercise, variant, pixels, scale):
     leg = anchor.leg
     joints = guide_joints(exercise, progress * training_range(exercise), variant)
     points = {name: pixels(anchor.x + anchor.direction * leg * x, anchor.y + leg * y) for name, (x, y) in joints.items()}
-    height = preview.shape[0]
-    line_width = max(3, round(height / 170))
-    dash_length = max(7, round(line_width * 2.1))
-    dash_gap = max(4, round(line_width * 1.5))
-    for first, second in GUIDE_CONNECTIONS:
-        if first not in points or second not in points:
-            continue
-        ax, ay = points[first]
-        bx, by = points[second]
-        length = hypot(bx - ax, by - ay)
-        for dash in range(0, round(length), dash_length + dash_gap):
-            a, b = dash / length, min(length, dash + dash_length) / length
-            start = (round(ax + (bx - ax) * a), round(ay + (by - ay) * a))
-            end = (round(ax + (bx - ax) * b), round(ay + (by - ay) * b))
-            cv2.line(preview, start, end, POSE_OUTLINE, line_width + 3, cv2.LINE_AA)
-            cv2.line(preview, start, end, GUIDE_BAR, line_width, cv2.LINE_AA)
+    body_size = leg * scale
+    if not isfinite(body_size) or body_size <= 0:
+        return
+    line_width = max(1, round(body_size * 0.012))
+    near = np.zeros(preview.shape[:2], dtype=np.uint8)
+    far = np.zeros_like(near)
+
+    def limb(mask, start, end, first_radius, last_radius):
+        _training_limb(mask, start, end, first_radius * body_size, last_radius * body_size)
+
+    def shifted(point):
+        return round(point[0] - anchor.direction * body_size * 0.055), round(point[1] - body_size * 0.008)
+
+    # A second, quieter arm and leg make the side view readable at every phase.
+    far_points = {name: points.get("far" + name[0].upper() + name[1:], shifted(points[name]))
+                  for name in ("hip", "knee", "ankle", "heel", "toe", "shoulder", "elbow", "wrist")}
+    for start, end, first_radius, last_radius in (
+        ("hip", "knee", 0.076, 0.052), ("knee", "ankle", 0.050, 0.030),
+        ("heel", "toe", 0.033, 0.025), ("ankle", "heel", 0.030, 0.033),
+        ("shoulder", "elbow", 0.046, 0.035), ("elbow", "wrist", 0.035, 0.025),
+    ):
+        limb(far, far_points[start], far_points[end], first_radius, last_radius)
+    _paint_training_silhouette(preview, far, 0.13, 0.45, line_width)
+
+    shoulder, hip = points["shoulder"], points["hip"]
+    waist = tuple(round(a + (b - a) * 0.64) for a, b in zip(shoulder, hip))
+    limb(near, shoulder, waist, 0.105, 0.080)
+    limb(near, waist, hip, 0.080, 0.105)
+    for start, end, first_radius, last_radius in (
+        ("hip", "knee", 0.078, 0.052), ("knee", "ankle", 0.052, 0.030),
+        ("heel", "toe", 0.034, 0.025), ("ankle", "heel", 0.030, 0.034),
+        ("shoulder", "elbow", 0.048, 0.035), ("elbow", "wrist", 0.035, 0.025),
+    ):
+        limb(near, points[start], points[end], first_radius, last_radius)
+    wrist, elbow = points["wrist"], points["elbow"]
+    hand = points.get("hand", tuple(round(w + (w - e) * 0.15) for w, e in zip(wrist, elbow)))
+    limb(near, wrist, hand, 0.027, 0.026)
+
+    # The model's nose point is a head anchor; a small profile gives its facing direction.
+    head = (round(points["nose"][0] - anchor.direction * body_size * 0.022),
+            round(points["nose"][1] - body_size * 0.01))
+    limb(near, shoulder, head, 0.039, 0.035)
+    cv2.ellipse(near, head, (max(1, round(body_size * 0.078)), max(1, round(body_size * 0.098))),
+                0, 0, 360, 255, -1, cv2.LINE_AA)
+    nose = np.rint([(head[0] + anchor.direction * body_size * 0.060, head[1] - body_size * 0.024),
+                   (head[0] + anchor.direction * body_size * 0.105, head[1] + body_size * 0.016),
+                   (head[0] + anchor.direction * body_size * 0.060, head[1] + body_size * 0.040)]).astype(np.int32)
+    cv2.fillConvexPoly(near, nose, 255, cv2.LINE_AA)
+    _paint_training_silhouette(preview, near, 0.24, 0.90, line_width)
     if "bar" in points:
-        cv2.circle(preview, points["bar"], max(4, round(leg * scale * 0.09)), GUIDE_BAR, 2, cv2.LINE_AA)
+        cv2.line(preview, points["bar"], shoulder, GUIDE_BAR, line_width + 1, cv2.LINE_AA)
+        cv2.circle(preview, points["bar"], max(4, round(body_size * 0.09)), POSE_OUTLINE, line_width + 3, cv2.LINE_AA)
+        cv2.circle(preview, points["bar"], max(4, round(body_size * 0.09)), GUIDE_BAR, line_width + 1, cv2.LINE_AA)
 
 
 def draw_training_legend(preview, live, recorded=False):
@@ -887,14 +979,15 @@ def draw_training_legend(preview, live, recorded=False):
     top = bottom - (len(rows) + 1) * line_height - padding
     left = width - box_width - padding
     cv2.rectangle(preview, (left, top), (left + box_width, bottom), BG, -1)
-    for i, (label, color, dashed) in enumerate(rows):
+    for i, (label, color, silhouette) in enumerate(rows):
         x, y = left + padding, top + (i + 1) * line_height
         bar = max(8, round(22 * scale))
-        segment_end = x + bar
-        if dashed:
-            segment_end = x + bar // 3
-            cv2.line(preview, (x + 2 * bar // 3, y - 5), (x + bar, y - 5), color, weight + 1, cv2.LINE_AA)
-        cv2.line(preview, (x, y - 5), (segment_end, y - 5), color, weight + 1, cv2.LINE_AA)
+        if silhouette:
+            center = x + bar // 2
+            cv2.circle(preview, (center, y - 12), max(2, round(3 * scale)), color, -1, cv2.LINE_AA)
+            cv2.line(preview, (center, y - 7), (center, y + 1), color, weight + 3, cv2.LINE_AA)
+        else:
+            cv2.line(preview, (x, y - 5), (x + bar, y - 5), color, weight + 1, cv2.LINE_AA)
         draw_text(preview, label, x + bar + padding, y, font, color, weight)
     draw_text(preview, hint, left + padding, bottom - padding, font, INK)
 

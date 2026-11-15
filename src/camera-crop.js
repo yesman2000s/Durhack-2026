@@ -26,12 +26,14 @@ export function sourceLandmarks(landmarks, sourceWidth, crop) {
 export function poseInCenter(landmarks, sourceWidth, crop) {
   if (!landmarks || !crop || crop.width === sourceWidth) return true;
   const sides = [[23, 27], [24, 28]];
+  const confidence = (point) => Math.min(point.visibility ?? 1, point.presence ?? 1);
   const best = sides
     .map(([hip, ankle]) => [landmarks[hip], landmarks[ankle]])
-    .filter(([hip, ankle]) => hip?.visibility >= 0.55 && ankle?.visibility >= 0.55)
-    .sort(([hip, ankle], [otherHip, otherAnkle]) => otherHip.visibility + otherAnkle.visibility - hip.visibility - ankle.visibility)[0];
+    .filter((pair) => pair.every((point) => point && Number.isFinite(point.x)
+      && [point.visibility ?? 1, point.presence ?? 1].every((confidence) => Number.isFinite(confidence) && confidence >= .55)))
+    .sort(([hip, ankle], [otherHip, otherAnkle]) => confidence(otherHip) + confidence(otherAnkle) - confidence(hip) - confidence(ankle))[0];
   if (!best) return true;
   const [hip, ankle] = best;
   const midpoint = ((hip.x + ankle.x) * sourceWidth * 0.5 - crop.left) / crop.width;
-  return midpoint >= 0.175 && midpoint <= 0.825;
+  return midpoint >= 0.08 && midpoint <= 0.92;
 }

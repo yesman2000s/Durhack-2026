@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeEvidence } from '../src/evidence.js';
+import { captureImage, framePose, makeEvidence } from '../src/evidence.js';
 
 const metrics = {
   startKneeAngleDeg: 176, kneeAngleAtBottomDeg: 96, finishKneeAngleDeg: 173,
@@ -39,4 +39,49 @@ test('exports exercise measurements and marks only the guided attempt', () => {
   assert.equal(evidence.trainingGuide, true);
   assert.deepEqual(evidence.metrics, rep.metrics);
   assert.equal(Object.hasOwn(makeEvidence(args), 'trainingGuide'), false);
+});
+
+test('preserves 720p snapshot detail and resizes larger frames with the correct aspect ratio', () => {
+  const calls = [];
+  const ctx = { drawImage(...args) { calls.push(args); } };
+  const canvas = {
+    width: 0, height: 0,
+    getContext() { return ctx; },
+    toDataURL(format, quality) {
+      assert.equal(format, 'image/jpeg');
+      assert.equal(quality, .9);
+      return 'data:image/jpeg;base64,cGhvdG8=';
+    },
+  };
+  const source = {};
+  assert.deepEqual(captureImage(source, 1280, 720, canvas), {
+    url: 'data:image/jpeg;base64,cGhvdG8=', width: 1280, height: 720,
+  });
+  assert.equal(ctx.imageSmoothingEnabled, true);
+  assert.equal(ctx.imageSmoothingQuality, 'high');
+  assert.deepEqual(calls.at(-1), [source, 0, 0, 1280, 720]);
+  const portrait = captureImage(source, 2160, 3840, canvas);
+  assert.deepEqual([portrait.width, portrait.height], [720, 1280]);
+  const small = captureImage(source, 320, 240, canvas);
+  assert.deepEqual([small.width, small.height], [320, 240]);
+});
+
+test('omits unavailable images instead of exporting a blank or invalid-sized JPEG', () => {
+  const canvas = { getContext() { throw new Error('Must not encode'); } };
+  for (const [width, height] of [[0, 720], [1280, -1], [NaN, 720], [1280, Infinity]]) {
+    assert.equal(captureImage({}, width, height, canvas), null);
+  }
+  assert.equal(captureImage({ readyState: 1 }, 1280, 720, canvas), null);
+  assert.equal(captureImage(null, 1280, 720, canvas), null);
+});
+
+test('snapshot poses retain presence confidence for optional joints', () => {
+  const landmarks = [];
+  landmarks[15] = { x: .4, y: .5, visibility: .9, presence: .1 };
+  landmarks[29] = { x: .5, y: .8, visibility: .9, presence: NaN };
+  landmarks[31] = { x: .6, y: .8, visibility: .9 };
+  const { joints } = framePose({ landmarks }, { side: 'left' });
+  assert.equal(joints.wrist.presence, .1);
+  assert.equal(joints.heel.presence, 0);
+  assert.equal(Object.hasOwn(joints.toe, 'presence'), false);
 });

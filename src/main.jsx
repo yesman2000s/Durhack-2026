@@ -11,8 +11,10 @@ import { poseInCenter } from './camera-crop.js';
 import { createPosePreview } from './pose-preview.js';
 import { makeMotionTrace, recordPose } from './motion-trace.js';
 import { SkeletonPlayback } from './skeleton-playback.jsx';
-import { FormFeedback } from './form-feedback.jsx';
-import { captureImage, downloadEvidence, FORM_GUIDE, framePose, makeEvidence } from './evidence.js';
+import { CoachingAudioControl, FormFeedback } from './form-feedback.jsx';
+import { createRepCoach } from './rep-coach.js';
+import { createCaptureSession } from './capture-session.js';
+import { captureImage, downloadEvidence, exportSnapshot, FORM_GUIDE, framePose, makeEvidence } from './evidence.js';
 import './styles.css';
 
 const DEFAULT_SETUP = { ready: false, checks: {}, message: 'Start the camera to check your position.', progress: 0 };
@@ -124,7 +126,7 @@ function PracticeGuide({ live, reference, variant, exercise, guideRef }) {
   </details>;
 }
 
-function RepResult({ result, onClear, onPlayGuide, titleRef }) {
+function RepResult({ result, review, onRetry, onClear, onPlayGuide, titleRef }) {
   const [selected, setSelected] = useState(result.snapshots.find(({ phase }) => phase === 'bottom')?.phase ?? result.snapshots[0]?.phase);
   const [expanded, setExpanded] = useState(false);
   const selectedSnapshot = result.snapshots.find(({ phase }) => phase === selected);
@@ -152,7 +154,7 @@ function RepResult({ result, onClear, onPlayGuide, titleRef }) {
   return <section className="result-panel" aria-labelledby="result-title" id="review">
     <div className="result-header">
       <div>
-        <h2 id="result-title" tabIndex={-1} ref={titleRef}>Rep captured</h2>
+        <h2 id="result-title" tabIndex={-1} ref={titleRef}>{result.session?.mode === 'set' ? `Rep ${result.session.repNumber}` : 'Rep captured'}</h2>
         <p>{resultTitle}{result.source === 'simulated' ? ' · Simulated example' : result.source === 'video' ? ' · Uploaded video' : ''}{result.trainingGuide ? ' · Guided practice' : ''}{reference?.establishedByThisRep ? ' · First rep baseline' : ''}</p>
       </div>
       <div className="result-actions">
@@ -186,7 +188,7 @@ function RepResult({ result, onClear, onPlayGuide, titleRef }) {
         {mainValues.map(renderMetric)}
       </dl>
     </div>
-    {squat && result.snapshots.length > 0 && <FormFeedback rep={result} />}
+    <FormFeedback rep={result} review={review} onRetry={onRetry} />
     {Number.isFinite(m.thighToShinRatio) && <p className="leg-ratio">
       <strong>Thigh to shin</strong><strong>{ratio(m.thighToShinRatio)}</strong>
       <span>Hip to knee ÷ knee to ankle, estimated from the side view.</span>
@@ -226,6 +228,17 @@ function App() {
   const reviewTitle = useRef(null);
   const studio = useRef(null);
   const videoInput = useRef(null);
+  const workout = useRef(null);
+  const repResults = useRef(new Map());
+  const coach = useRef(null);
+  const reviewData = useRef({});
+  const voicePreference = useRef(true);
+  const lastFrameAt = useRef(null);
+  const [captureMode, setCaptureMode] = useState('single-rep');
+  const [workoutView, setWorkoutView] = useState(null);
+  const [reviews, setReviews] = useState({});
+  const [coachAudio, setCoachAudio] = useState({ status: 'idle' });
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mode, setMode] = useState('off');
   const [exercise, setExercise] = useState('squat');
   const [training, setTraining] = useState(true);
@@ -254,9 +267,99 @@ function App() {
   const exerciseTitle = exercise === 'squat' ? SQUAT_LABELS[variant] : selectedExercise.title;
   const setupChecks = [
     ['inFrame', 'Fit your whole body', selectedExercise.framing],
-    ['sideOn', 'Turn to the side', 'Your profile can face either edge of the screen.'],
+    ['sideOn', exercise === 'push-up' ? 'Show a mostly side view' : 'Turn to the side',
+      exercise === 'push-up' ? 'A slight camera angle is okay. Keep your near arm and leg visible.' : 'Your profile can face either edge of the screen.'],
     ['steady', selectedExercise.start, 'Hold the starting pose for one second.'],
   ];
+
+  function getCoach() {
+    if (!coach.current) {
+      coach.current = createRepCoach({
+        onUpdate(repId, patch) {
+          reviewData.current = { ...reviewData.current, [repId]: { ...reviewData.current[repId], ...patch } };
+          setReviews(reviewData.current);
+          if (patch.feedback) {
+            workout.current?.updateFeedback(repId, patch.feedback);
+            publishWorkout();
+          }
+        },
+        onAudioState: setCoachAudio,
+      });
+      coach.current.setMuted(!voicePreference.current);
+    }
+    return coach.current;
+  }
+
+  function publishWorkout() {
+    if (!workout.current) return;
+    const next = workout.current.snapshot();
+    setWorkoutView(next);
+  }
+
+  function beginWorkout() {
+    getCoach().reset();
+    reviewData.current = {};
+    setReviews({});
+    repResults.current.clear();
+    setResult(null);
+    setVideoReview(null);
+    workout.current = createCaptureSession(captureMode, { id: crypto.randomUUID() });
+    lastFrameAt.current = null;
+    publishWorkout();
+    if (recorder.current) recorder.current.demoNextAt = null;
+  }
+
+  function finishWorkout(reason = 'manual') {
+    const current = workout.current;
+    if (!current) return;
+    current.end(reason);
+    const summary = current.snapshot();
+    publishWorkout();
+    const label = summary.mode === 'set' ? `Set finished · ${summary.repCount} ${summary.repCount === 1 ? 'rep' : 'reps'}.`
+      : summary.repCount ? 'Rep captured.' : 'Rep capture ended.';
+    const message = reason === 'no-reps' ? 'No rep detected. Start again when you’re ready.'
+      : `${label}${reason === 'inactivity' ? ' No new movement for 12 seconds.' : ''} ${summary.repCount ? 'Feedback appears as each review finishes.' : 'No completed reps to review.'}`;
+    clearAttempt(message);
+    const source = recorder.current;
+    if (source) source.demoNextAt = null;
+    if (source?.kind === 'video') {
+      source.handle?.finish();
+      setVideoInfo((info) => ({ ...info, running: false, complete: summary.repCount > 0 }));
+      setVideoReview(source.latestVideoReview ?? null);
+    }
+  }
+
+  function observeWorkout(timestampMs, state, hasPose) {
+    if (!workout.current?.snapshot().active) return false;
+    const moving = Boolean(state.live) && (['descending', 'bottom', 'ascending'].includes(state.phase) ||
+      state.events.some(({ type }) => type === 'rep-complete' || type === 'capture'));
+    const snapshot = workout.current.observe({ timestampMs, moving, hasPose,
+      discarded: state.events.some(({ type }) => type === 'rep-discarded') });
+    setWorkoutView(snapshot);
+    if (!snapshot.active) {
+      finishWorkout(snapshot.reason);
+      return true;
+    }
+    return false;
+  }
+
+  function retryFeedback(rep) {
+    getCoach().retry(rep, rep.session);
+  }
+
+  function downloadSet() {
+    const session = workout.current?.snapshot();
+    if (!session?.repCount) return;
+    const payload = { schemaVersion: 1, ...session, reps: [...repResults.current.values()].map((rep) => ({
+      ...rep, snapshots: rep.snapshots.map(exportSnapshot), feedback: reviewData.current[rep.id]?.feedback ?? null,
+    })) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `compose-set-${session.id.slice(0, 8)}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   function enableAudio() {
     if (!playSound.current || !window.AudioContext) return;
@@ -300,6 +403,7 @@ function App() {
   }
 
   function resetSetup() {
+    if (workout.current?.snapshot().active) finishWorkout('reset');
     clearAttempt();
     clearReference();
     tracker.current.reset();
@@ -308,6 +412,7 @@ function App() {
   }
 
   function stop(message) {
+    if (workout.current?.snapshot().active) finishWorkout('stopped');
     const source = recorder.current;
     recorder.current = null;
     source?.handle?.stop();
@@ -321,6 +426,9 @@ function App() {
   useEffect(() => {
     const pagehide = () => { if (recorder.current) stop(); };
     const visibility = () => {
+      // Keep completed reps in the analysis queue when the user changes tabs.
+      // Only speech pauses; aborting reviews here would leave retained rows pending.
+      coach.current?.setMuted(document.hidden || !voicePreference.current);
       if (document.hidden && recorder.current && recorder.current.kind !== 'video') {
         stop('Camera paused when you left the page.');
       }
@@ -331,10 +439,24 @@ function App() {
       recorder.current?.handle?.stop();
       posePreview.current?.clear();
       trainingOverlay.current?.clear();
+      coach.current?.dispose();
       audio.current?.close().catch(() => {});
       window.removeEventListener('pagehide', pagehide);
       document.removeEventListener('visibilitychange', visibility);
     };
+  }, []);
+
+  useEffect(() => {
+    // A disconnected camera may stop emitting frames. Keep the end-of-set
+    // clock alive without advancing an uploaded video's source timeline.
+    const timer = window.setInterval(() => {
+      const last = lastFrameAt.current;
+      if (!last || recorder.current?.kind === 'video' || !workout.current?.snapshot().active) return;
+      const elapsed = performance.now() - last.wall;
+      if (elapsed < 500) return;
+      observeWorkout(last.timestampMs + elapsed, { live: null, phase: 'setup', events: [] }, false);
+    }, 500);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -423,6 +545,7 @@ function App() {
     a.movementStarted = false;
     a.guideShown = false;
     a.guideStartedAt = null;
+    a.positioningStartedAt = undefined;
     setCountdown(0);
     setShowGo(false);
     setCaptureStage('positioning');
@@ -441,6 +564,7 @@ function App() {
   function onFrame(frame, session) {
     if (session !== recorder.current) return;
     const { timestampMs, width, height } = frame;
+    lastFrameAt.current = { wall: performance.now(), timestampMs };
     const fromVideo = session.kind === 'video';
     const crop = frame.crop ?? { left: 0, width };
     if (session.width !== width || session.height !== height) {
@@ -465,6 +589,7 @@ function App() {
       ...frame,
       landmarks: centered || trackingMotion ? frame.landmarks : null,
       armed: trackingMotion,
+      continuous: workout.current?.snapshot().active && workout.current.mode === 'set',
     });
     if (!trackingMotion && (!centered || (!frame.landmarks && crop.width < width && a))) {
       state = { ...state, setup: { ...state.setup, message: 'Step into the center with your head and feet in view.' } };
@@ -476,12 +601,17 @@ function App() {
       posePreview.current.update({ ...frame, crop, exercise: a?.exercise ?? session.exercise }, side, trackingMotion, Boolean(state.continuitySide));
     }
     setView(state);
+    if (observeWorkout(timestampMs, state, Boolean(frame.landmarks && state.live))) return;
     if (trackingMotion) trainingOverlay.current?.update(frame, state.live?.side);
     const profile = currentReference.current;
     if (profile && !trackingMotion && state.setup.ready && state.live && profile.trackingSide !== state.live.side) {
       clearReference();
     }
     if (!a) return;
+    if (session.demoNextAt != null && timestampMs >= session.demoNextAt && a.stage === 'armed') {
+      session.demoNextAt = null;
+      session.handle?.perform?.();
+    }
     if (fromVideo && a.guideShown) {
       if (['descending', 'bottom', 'ascending'].includes(state.phase)) a.guideStartedAt ??= timestampMs;
       trainingOverlay.current.renderAt(a.guideStartedAt == null ? 0 : timestampMs - a.guideStartedAt);
@@ -490,18 +620,21 @@ function App() {
     if (a.stage !== 'armed' && !fromVideo) {
       a.positioningStartedAt ??= timestampMs;
       if (timestampMs - a.positioningStartedAt > 45000) {
-        clearAttempt('Setup timed out. Start again when you’re ready.');
+        finishWorkout('no-reps');
         return;
       }
     }
     if (a.stage === 'positioning') {
       if (state.setup.ready && state.phase === 'ready') {
         rememberStanding(a, frame, state);
-        if (fromVideo) {
+        if (fromVideo || a.continuing) {
           a.stage = 'armed';
           a.armedAt = timestampMs;
           setCaptureStage('armed');
-          showTrainingGuide(a, frame, state.live?.side, true);
+          showTrainingGuide(a, frame, state.live?.side, fromVideo);
+          if (session.kind === 'demo' && a.continuing && workout.current.snapshot().repCount < 3) {
+            session.demoNextAt = timestampMs + 900;
+          }
         } else {
           a.stage = 'countdown';
           a.countStartedAt = timestampMs;
@@ -537,14 +670,14 @@ function App() {
       }
     }
     if (timestampMs - a.armedAt >= 1000) setShowGo(false);
-    if (timestampMs - a.armedAt > 20000) {
+    if (workout.current?.mode !== 'set' && timestampMs - a.armedAt > 20000) {
       tracker.current.reset();
-      if (fromVideo) resumePositioning(a);
-      else clearAttempt('No complete rep was detected in time. Stand tall and try again.');
+      if (fromVideo || workout.current?.mode === 'set') resumePositioning(a);
+      else finishWorkout('no-reps');
       return;
     }
     if (state.phase === 'setup' && !state.events.length) {
-      if (!fromVideo && a.movementStarted) clearAttempt('Your pose left the setup area. Check the framing and try again.');
+      if (!fromVideo && a.movementStarted && workout.current?.mode !== 'set') finishWorkout('tracking-lost');
       else resumePositioning(a);
       return;
     }
@@ -563,14 +696,15 @@ function App() {
         if (image) a.images.set(event.phase, image);
       }
       if (event.type === 'rep-discarded') {
-        if (fromVideo) {
+        if (fromVideo || workout.current?.mode === 'set') {
           tracker.current.reset();
           resumePositioning(a);
           break;
         }
         const message = a.exercise !== 'squat' && event.reason === 'incomplete-descent'
           ? DISCARD_MESSAGES['incomplete-movement'] : DISCARD_MESSAGES[event.reason];
-        clearAttempt(message ?? 'The full rep could not be tracked. Stand side-on and try again.');
+        finishWorkout('incomplete');
+        setNotice(message ?? 'The full rep could not be tracked. Stand side-on and try again.');
         break;
       }
       if (event.type === 'rep-complete') {
@@ -601,20 +735,39 @@ function App() {
           reference: currentReference.current ? { ...currentReference.current, establishedByThisRep: firstRep } : null,
           trainingGuide: a.guideShown,
         });
+        const context = workout.current.contextForNextRep();
+        evidence.session = context;
+        evidence.captureMode = context.mode;
+        repResults.current.set(evidence.id, evidence);
+        workout.current.addRep(evidence, timestampMs);
         setResult(evidence);
-        clearAttempt('Rep captured. Review the snapshots and measurements below.');
+        publishWorkout();
+        getCoach().enqueue(evidence, context);
         if (fromVideo) {
-          session.handle.finish();
-          setVideoInfo((info) => ({ ...info, running: false, complete: true }));
           const movement = Math.max(a.referenceAt, rep.startedAtMs);
           const bottom = rep.frames.find(({ phase }) => phase === 'bottom')?.timestampMs ?? movement;
           const returned = rep.returnedAtMs;
           const rise = Math.max(bottom, returned - (rep.metrics.ascentMs ?? rep.metrics.returnMs));
-          setVideoReview({
+          session.latestVideoReview = {
             evidence,
             anchor: a.guideAnchor,
             timing: { start: a.referenceAt, movement, bottom, rise, returned, end: timestampMs },
-          });
+          };
+        }
+        if (context.mode === 'set') {
+          trainingOverlay.current?.clear();
+          setGuideVisible(false);
+          const next = prepareAttempt(a.trainingGuide, { exercise: a.exercise, variant: a.variant, continuing: true });
+          rememberStanding(next, frame, state);
+          next.stage = 'armed';
+          next.armedAt = timestampMs;
+          setCaptureStage('armed');
+          // Simulated sets demonstrate three reps, then the inactivity finish.
+          if (session.kind === 'demo' && workout.current.snapshot().repCount < 3) session.demoNextAt = timestampMs + 900;
+          showTrainingGuide(next, frame, state.live?.side, fromVideo);
+          setNotice('Rep saved. Continue when ready, or end the set.');
+        } else {
+          finishWorkout('complete');
         }
         break;
       }
@@ -661,6 +814,7 @@ function App() {
     setVideoInfo({ name: file.name, at: 0, duration: 0, running: true, complete: false });
     const session = { kind: 'video', exercise, file };
     recorder.current = session;
+    beginWorkout();
     prepareAttempt(training);
     const fail = (err) => {
       if (session !== recorder.current) return;
@@ -679,7 +833,7 @@ function App() {
         },
         onEnd: () => {
           if (session !== recorder.current) return;
-          clearAttempt('No complete rep found. Keep your whole body in side view and hold the start and finish.');
+          finishWorkout(workout.current?.snapshot().repCount ? 'source-ended' : 'no-reps');
           setVideoInfo((info) => ({ ...info, at: info.duration, running: false }));
         },
         onError: fail,
@@ -728,9 +882,15 @@ function App() {
   function changeExercise(next) {
     if (next === exercise || attempt.current) return;
     resetSetup();
+    coach.current?.reset();
+    workout.current = null;
+    setWorkoutView(null);
+    setResult(null);
+    setVideoReview(null);
+    repResults.current.clear();
     tracker.current = next === 'squat' ? new SquatTracker() : new MobilityTracker(next);
     const session = recorder.current;
-    if (session) session.exercise = next;
+    if (session) { session.exercise = next; session.latestVideoReview = null; }
     if (session?.kind === 'demo') {
       session.handle.stop();
       session.handle = runExample(session, next);
@@ -742,6 +902,13 @@ function App() {
   function changeVariant(nextVariant) {
     if (nextVariant === variant || attempt.current) return;
     setVariant(nextVariant);
+    coach.current?.reset();
+    workout.current = null;
+    setWorkoutView(null);
+    setResult(null);
+    setVideoReview(null);
+    if (recorder.current) recorder.current.latestVideoReview = null;
+    repResults.current.clear();
     if (recorder.current?.kind === 'demo') {
       recorder.current.handle.setVariant(nextVariant);
       resetSetup();
@@ -754,16 +921,21 @@ function App() {
   function startRep() {
     if (!recorder.current || attempt.current) return;
     enableAudio();
+    tracker.current.reset();
+    beginWorkout();
     prepareAttempt(training);
   }
 
-  function prepareAttempt(withGuide) {
+  function prepareAttempt(withGuide, options = {}) {
     setNotice('');
     attempt.current = {
       stage: 'positioning', images: new Map(), candidates: new Map(), trace: [],
-      exercise, variant: exercise === 'squat' ? variant : 'bodyweight', trainingGuide: withGuide,
+      exercise: options.exercise ?? exercise,
+      variant: options.variant ?? (exercise === 'squat' ? variant : 'bodyweight'), trainingGuide: withGuide,
+      continuing: Boolean(options.continuing),
     };
     setCaptureStage('positioning');
+    return attempt.current;
   }
 
   async function openBelowStudio(target) {
@@ -834,6 +1006,12 @@ function App() {
   const viewfinderCue = VIEWFINDER_CUES[cameraCue] ?? cameraCue;
   const liveAnnouncement = countdown > 0 ? `Recording in ${countdown} seconds`
     : showGo ? 'Go' : active ? viewfinderCue : notice;
+  const inSet = workoutView?.mode === 'set' && workoutView.active;
+  const latestRep = workoutView?.reps.at(-1);
+  const latestReview = latestRep && reviews[latestRep.id];
+  const feedbackRep = workoutView?.reps.findLast((rep) => reviews[rep.id]?.feedback);
+  const currentFeedback = feedbackRep && reviews[feedbackRep.id].feedback;
+  const completedReviews = workoutView?.reps.filter((rep) => reviews[rep.id]?.status === 'complete').length ?? 0;
 
   return <main className="main">
         <section ref={studio} className="camera-panel" data-expanded={expanded} data-fallback={fallbackFullscreen} aria-labelledby="studio-title">
@@ -858,7 +1036,8 @@ function App() {
           </header>
           {error && <div className="error-banner" role="alert">{error}</div>}
           <div className="viewport-wrap" data-active={active}>
-            <span className="camera-status" data-tone={cameraTone}>{cameraLabel}</span>
+            <span className="camera-status" data-tone={cameraTone}>{inSet ? `Set · ${workoutView.repCount} ${workoutView.repCount === 1 ? 'rep' : 'reps'} · ${cameraLabel}` : cameraLabel}</span>
+            {inSet && workoutView.repCount > 0 && workoutView.idleMs >= 6000 && <span className="set-ending" role="status">Set ends in {Math.ceil(workoutView.remainingMs / 1000)}s · move to continue</span>}
             {videoInfo && <div className="video-progress">
               <span className="video-progress-label" title={videoInfo.name}>
                 {videoInfo.duration ? `${clipTime(videoInfo.at)} / ${clipTime(videoInfo.duration)}` : 'Reading video…'}
@@ -896,6 +1075,12 @@ function App() {
           </div>
           <div className="camera-dock">
             <div className="camera-settings">
+              <label className="example-control dock-select">Capture
+                <select aria-label="Capture mode" value={captureMode} disabled={stageActive || loading} onChange={(event) => setCaptureMode(event.currentTarget.value)}>
+                  <option value="single-rep">One rep</option>
+                  <option value="set">Full set</option>
+                </select>
+              </label>
               <label className="example-control dock-select">Exercise
                 <select value={exercise} disabled={stageActive || loading} onChange={(event) => changeExercise(event.currentTarget.value)}>
                   {Object.entries(EXERCISES).map(([id, info]) => <option key={id} value={id}>{info.title}</option>)}
@@ -913,7 +1098,7 @@ function App() {
                 <input type="checkbox" checked={training} disabled={stageActive || loading} onChange={(event) => setTraining(event.currentTarget.checked)} />
                 <span>Training overlay</span>
               </label>
-              {!usingVideo && active && !stageActive && <button className="button button-primary" onClick={startRep}>{reference || currentResult ? 'Capture another rep' : 'Capture one rep'}</button>}
+              {!usingVideo && active && !stageActive && <button className="button button-primary" onClick={startRep}>{captureMode === 'set' ? 'Start a set' : reference || currentResult ? 'Capture another rep' : 'Capture one rep'}</button>}
               {result && !stageActive && <button className="button button-secondary" onClick={() => void openBelowStudio(reviewTitle.current)}>{usingVideo && !videoInfo?.complete ? 'Review last rep' : 'Review rep'}</button>}
               {usingVideo && !videoInfo?.running && <>
                 {videoReview && <button className="button button-primary" onClick={playVideoGuide}><Icon name="play" />Play rep with guide</button>}
@@ -925,10 +1110,30 @@ function App() {
                 setSoundEnabled(playSound.current);
                 enableAudio();
               }}><Icon name={soundEnabled ? 'sound' : 'mute'} />Go sound: {soundEnabled ? 'on' : 'off'}</button>}
-              {!usingVideo && stageActive && <button className="button button-secondary" onClick={() => { clearAttempt('Rep capture cancelled.'); tracker.current.reset(); }}>Cancel rep</button>}
+              {inSet && <button className="button button-primary" onClick={() => finishWorkout('manual')}>End set</button>}
+              {!usingVideo && stageActive && !inSet && <button className="button button-secondary" onClick={() => { finishWorkout('cancelled'); tracker.current.reset(); setNotice('Rep capture cancelled.'); }}>Cancel rep</button>}
               {!usingVideo && active && !stageActive && <button className="button button-secondary" onClick={() => { resetSetup(); setNotice('Camera setup reset.'); }}>Redo setup</button>}
               {(active || loading) && <button className="button button-stop" onClick={() => stop()}><Icon name="stop" />{usingVideo ? videoInfo?.running ? 'Stop analysis' : 'Remove video' : mode === 'demo' ? 'Stop example' : 'Stop camera'}</button>}
             </div>
+            <div className="coaching-options">
+              <label className="training-toggle">
+                <input type="checkbox" checked={voiceEnabled} onChange={(event) => {
+                  voicePreference.current = event.currentTarget.checked;
+                  setVoiceEnabled(voicePreference.current);
+                  getCoach().setMuted(!voicePreference.current);
+                }} />
+                <span>Spoken feedback</span>
+              </label>
+              <p>Each completed rep sends images and movement data to Gemini. ElevenLabs reads the feedback aloud.</p>
+              {captureMode === 'set' && <p>Sets finish after 12 seconds without another movement, or when you select End set.</p>}
+            </div>
+            {latestRep && <div className="coaching-live" aria-live="polite">
+              <strong>{latestReview?.status === 'queued' || latestReview?.status === 'analyzing'
+                ? `Reviewing rep ${latestRep.repNumber}…` : `Feedback · rep ${feedbackRep?.repNumber ?? latestRep.repNumber}`}</strong>
+              {latestReview?.error && <p>{latestReview.error} <button className="text-button" onClick={() => retryFeedback(repResults.current.get(latestRep.id))}>Retry</button></p>}
+              {currentFeedback && <p>{currentFeedback.summary} {currentFeedback.tips.join(' ')}</p>}
+              <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />
+            </div>}
           </div>
         </section>
         <div className="studio-details" inert={expanded}>
@@ -945,9 +1150,26 @@ function App() {
           {active && captureStage === 'positioning' && view.setup.progress > 0 && <div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${view.setup.progress * 100}%` }} /></div>}
           <p className="setup-hint">{notice || setupMessage}</p>
           <PracticeGuide live={view.live} reference={reference} variant={variant} exercise={exercise} guideRef={guide} />
-          <p className="privacy-badge"><Icon name="shield" />Capture and replay run on this device</p>
+          <p className="privacy-badge"><Icon name="shield" />Tracking runs on this device. Rep evidence goes to Gemini; feedback text goes to ElevenLabs.</p>
         </aside>
-      {result && <RepResult key={result.id} result={result} titleRef={reviewTitle} onPlayGuide={videoReview ? playVideoGuide : undefined} onClear={() => {
+      {workoutView?.mode === 'set' && <section className="set-results" aria-labelledby="set-title">
+        <div className="result-header">
+          <div><h2 id="set-title">{workoutView.active ? 'Your set' : 'Set finished'} · {workoutView.repCount} {workoutView.repCount === 1 ? 'rep' : 'reps'}</h2>
+            <p>{completedReviews} reviewed{workoutView.repCount > completedReviews ? ` · ${workoutView.repCount - completedReviews} pending or needing attention` : ''}</p></div>
+          {workoutView.repCount > 0 && <button className="button button-secondary" onClick={downloadSet}><Icon name="download" />Download set data</button>}
+        </div>
+        {workoutView.repCount === 0 && <p>Completed reps and their feedback will appear here.</p>}
+        <div className="set-rep-list">{workoutView.reps.map((rep) => {
+          const review = reviews[rep.id];
+          return <button key={rep.id} className="set-rep" aria-pressed={result?.id === rep.id} onClick={() => setResult(repResults.current.get(rep.id))}>
+            <strong>Rep {rep.repNumber}</strong>
+            <span>{review?.feedback ? review.feedback.summary || review.feedback.tips.join(' ') || 'Reviewed'
+              : review?.status === 'error' ? 'Analysis unavailable · select to retry' : 'Reviewing…'}</span>
+            {review?.feedback?.score != null && <b>{review.feedback.score}/100</b>}
+          </button>;
+        })}</div>
+      </section>}
+      {result && <RepResult key={result.id} result={result} review={reviews[result.id]} onRetry={() => retryFeedback(result)} titleRef={reviewTitle} onPlayGuide={videoReview?.evidence.id === result.id ? playVideoGuide : undefined} onClear={() => {
         setResult(null);
         setVideoReview(null);
         setNotice('Result cleared.');

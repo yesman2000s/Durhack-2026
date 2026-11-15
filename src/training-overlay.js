@@ -1,26 +1,22 @@
 import { demoLandmarks } from './demo.js';
 import { EXAMPLE_MOVEMENT_MS, exampleProgress, mobilityDemoLandmarks } from './mobility-demo.js';
+import { drawHumanGuide } from './human-guide.js';
 
 const REFERENCE_WIDTH = 960;
 const REFERENCE_HEIGHT = 540;
 const GUIDE_DURATION_MS = EXAMPLE_MOVEMENT_MS + 600;
 const GUIDE_RANGE = .60;
-const GUIDE_INK = '#ffdd94';
-const GUIDE_OUTLINE = '#211a12';
 // Match the phase boundaries in exampleProgress for captured-rep replay.
 export const guidePlaybackTimes = Object.freeze({ lowerEndMs: 2100, bottomEndMs: 2400, returnEndMs: EXAMPLE_MOVEMENT_MS });
 const SUPPORT_JOINTS = [27, 29, 31];
-const NEAR_BONES = [[7, 11], [11, 13], [13, 15], [11, 23], [23, 25], [25, 27], [27, 29], [27, 31], [29, 31]];
-const PUSH_UP_BONES = [...NEAR_BONES, [15, 19]];
-const FAR_LEG_BONES = [[24, 26], [26, 28], [28, 30], [28, 32], [30, 32]];
-const NEAR_JOINTS = [11, 13, 15, 23, 25, 27];
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function pixelPoint(landmarks, index, width, height, left = 0, visibility = .35) {
   const point = landmarks?.[index];
-  if (point && (point.visibility ?? 1) >= visibility && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+  if (point && (point.visibility ?? 1) >= visibility && (point.presence ?? 1) >= visibility &&
+      Number.isFinite(point.x) && Number.isFinite(point.y)) {
     return { x: point.x * width - left, y: point.y * height };
   }
   return null;
@@ -113,10 +109,12 @@ function guideTransform(frame, side, exercise, getReference, range) {
       x: (point.x * REFERENCE_WIDTH - anchorModel.x) * direction,
       y: point.y * REFERENCE_HEIGHT - anchorModel.y,
     })));
-  const minX = Math.min(...modelPoints.map((point) => point.x));
-  const maxX = Math.max(...modelPoints.map((point) => point.x));
-  const minY = Math.min(...modelPoints.map((point) => point.y));
-  const maxY = Math.max(...modelPoints.map((point) => point.y));
+  // Fit the body contour as well as the joints, including the head and plates.
+  const bodyMargin = 32;
+  const minX = Math.min(...modelPoints.map((point) => point.x)) - bodyMargin;
+  const maxX = Math.max(...modelPoints.map((point) => point.x)) + bodyMargin;
+  const minY = Math.min(...modelPoints.map((point) => point.y)) - bodyMargin;
+  const maxY = Math.max(...modelPoints.map((point) => point.y)) + bodyMargin;
   const padding = Math.min(Math.max(15, standingLength * .055), width / 4, height / 4);
   const scale = Math.min(clamp(anchorScale, naturalScale * .8, naturalScale * 1.2),
     (width - 2 * padding) / (maxX - minX), (height - 2 * padding) / (maxY - minY));
@@ -149,47 +147,8 @@ function guideTransform(frame, side, exercise, getReference, range) {
 
 function drawGuide(ctx, transform, pose, exercise, variant) {
   const { width, height } = transform;
-  const point = (landmark) => transform.point(landmark);
   ctx.clearRect(0, 0, width, height);
-  const size = Math.max(3.5, Math.min(width, height) / 118);
-  const bones = exercise === 'push-up' ? PUSH_UP_BONES
-    : exercise === 'knee-raise' ? [...FAR_LEG_BONES, ...NEAR_BONES] : NEAR_BONES;
-  ctx.beginPath();
-  for (const [from, to] of bones) {
-    const start = point(pose[from]);
-    const end = point(pose[to]);
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(end.x, end.y);
-  }
-  const head = point(pose[7]);
-  ctx.moveTo(head.x + size * 2.3, head.y);
-  ctx.arc(head.x, head.y, size * 2.3, 0, Math.PI * 2);
-  if (exercise === 'squat' && variant === 'barbell') {
-    const shoulder = pose[11];
-    const bar = point({ ...shoulder, x: shoulder.x - 39 / REFERENCE_WIDTH, y: shoulder.y + 3 / REFERENCE_HEIGHT });
-    ctx.moveTo(bar.x + size * 2.6, bar.y);
-    ctx.arc(bar.x, bar.y, size * 2.6, 0, Math.PI * 2);
-  }
-  ctx.setLineDash([size * 1.55, size * 1.25]);
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = size * 2.30;
-  ctx.strokeStyle = GUIDE_OUTLINE;
-  ctx.stroke();
-  ctx.lineWidth = size * 1.10;
-  ctx.strokeStyle = GUIDE_INK;
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = GUIDE_INK;
-  ctx.strokeStyle = GUIDE_OUTLINE;
-  ctx.lineWidth = size * .4;
-  for (const index of NEAR_JOINTS) {
-    const joint = point(pose[index]);
-    ctx.beginPath();
-    ctx.arc(joint.x, joint.y, size * .75, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
+  drawHumanGuide(ctx, pose.map((landmark) => transform.point(landmark)), exercise, variant);
 }
 
 export function createTrainingOverlay(canvas) {

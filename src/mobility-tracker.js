@@ -37,7 +37,9 @@ function angle(a, joint, b) {
 function pointAt(landmarks, index, width, height) {
   const point = landmarks?.[index];
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null;
-  return { x: point.x * width, y: point.y * height, confidence: point.visibility ?? 1 };
+  const estimates = [point.visibility ?? 1, point.presence ?? 1];
+  const confidence = estimates.every(Number.isFinite) ? Math.max(0, Math.min(1, ...estimates)) : 0;
+  return { x: point.x * width, y: point.y * height, confidence };
 }
 
 function bodySide(landmarks, side, width, height) {
@@ -68,6 +70,14 @@ function inspect(landmarks, width, height, exercise, reference, preferredSide) {
   const legLength = thighLength + shinLength;
   const torsoLength = distance(shoulder, hip);
   const armLength = pushUp ? distance(shoulder, elbow) + distance(elbow, wrist) : 0;
+  const segmentLengths = [thighLength, shinLength, torsoLength];
+  if (pushUp) segmentLengths.push(distance(shoulder, elbow), distance(elbow, wrist));
+  if (exercise === 'heel-raise') segmentLengths.push(distance(heel, toe));
+  // A displaced knee can shorten one segment and lengthen the other while
+  // preserving total leg length. Only reject gross changes; projected lengths
+  // naturally change with a mildly oblique view or out-of-plane movement.
+  const changedShape = reference && segmentLengths.some((length, index) =>
+    length < reference.segmentLengths[index] * 0.40 || length > reference.segmentLengths[index] * 1.85);
   if (Math.min(thighLength, shinLength, torsoLength) < height * 0.035 ||
       (pushUp && Math.min(distance(shoulder, elbow), distance(elbow, wrist)) < height * 0.025) ||
       (reference && (legLength < 0.60 * reference.legLength || legLength > 1.45 * reference.legLength))) {
@@ -87,10 +97,12 @@ function inspect(landmarks, width, height, exercise, reference, preferredSide) {
     ? Math.abs(side[key].x - far[key].x) / (reference?.legLength ?? legLength) : null;
   const shoulderSpan = span('shoulder'), hipSpan = span('hip');
   const profile = reference
-    ? !(hipSpan > 0.40 || (hipSpan > 0.30 && shoulderSpan > 0.40))
+    ? pushUp
+      ? !(hipSpan > 0.44 || (hipSpan > 0.36 && shoulderSpan > 0.55))
+      : !(hipSpan > 0.40 || (hipSpan > 0.30 && shoulderSpan > 0.40))
     : shoulderSpan !== null && hipSpan !== null
-      ? shoulderSpan <= 0.40 && hipSpan <= 0.29
-      : (hipSpan ?? shoulderSpan ?? Infinity) <= 0.23 ||
+      ? shoulderSpan <= (pushUp ? 0.50 : 0.40) && hipSpan <= (pushUp ? 0.35 : 0.29)
+      : (hipSpan ?? shoulderSpan ?? Infinity) <= (pushUp ? 0.30 : 0.23) ||
         (hipSpan === null && shoulderSpan === null && Math.abs(nose.x - shoulder.x) >= legLength * 0.09);
   if (!profile) return { reason: 'side', inFrame: true };
   const faceX = (nose?.confidence >= 0.40 ? nose.x - shoulder.x : 0);
@@ -105,30 +117,35 @@ function inspect(landmarks, width, height, exercise, reference, preferredSide) {
     distance(far.heel, far.toe) >= legLength * 0.045 && distance(far.heel, far.toe) <= legLength * 0.40
     ? { heel: far.heel, toe: far.toe } : null;
   const observation = {
-    side: side.side, shoulder, hip, knee, ankle, heel, toe, wrist, support, trustedToe, pairedFoot, direction, legLength, armLength,
+    side: side.side, shoulder, hip, knee, ankle, heel, toe, wrist, support, trustedToe, pairedFoot, direction, legLength, armLength, segmentLengths,
     kneeAngle, torsoLean, hipAngle: angle(shoulder, hip, knee),
     shinLean: Math.atan2(Math.abs(knee.x - ankle.x), ankle.y - knee.y) * TO_DEGREES,
     elbowAngle: pushUp ? angle(shoulder, elbow, wrist) : null,
     thighAngle: Math.atan2(direction * (knee.x - hip.x), knee.y - hip.y) * TO_DEGREES,
   };
+  // Preserve the more useful stance-change feedback when the hand or support
+  // moved; neither kind of invalid reading contributes movement evidence.
+  if (changedShape && !movement(observation, reference, exercise).shifted) return { reason: 'joints' };
   return { observation, inFrame: true };
 }
 
-function pushUpPlank(pose, angleFloor) {
+function pushUpPlank(pose, kneeFloor, hipFloor) {
   const { shoulder, wrist, hip, ankle, trustedToe, legLength, direction } = pose;
   const floor = trustedToe ?? ankle;
-  return direction * (shoulder.x - ankle.x) >= legLength * 1.10 &&
-    direction * (hip.x - ankle.x) >= legLength * 0.60 &&
-    direction * (shoulder.x - hip.x) >= legLength * 0.32 &&
-    Math.abs(wrist.y - floor.y) <= legLength * (trustedToe ? 0.26 : 0.37) &&
-    pose.kneeAngle >= angleFloor && pose.hipAngle >= angleFloor;
+  return direction * (shoulder.x - ankle.x) >= legLength * 0.95 &&
+    direction * (hip.x - ankle.x) >= legLength * 0.50 &&
+    direction * (shoulder.x - hip.x) >= legLength * 0.22 &&
+    Math.abs(wrist.y - floor.y) <= legLength * (trustedToe ? 0.34 : 0.43) &&
+    pose.kneeAngle >= kneeFloor && pose.hipAngle >= hipFloor;
 }
 
 function startingPosition(pose, exercise) {
   if (exercise === 'push-up') {
-    return pushUpPlank(pose, 145) && pose.elbowAngle >= 145 &&
-      pose.wrist.y - pose.shoulder.y >= pose.armLength * 0.69 &&
-      Math.abs(pose.wrist.x - pose.shoulder.x) <= pose.armLength * 0.52;
+    // Recognize a steady personal top position, not an ideal form template.
+    // Soft elbows, varied hand placement and projection can change these angles.
+    return pushUpPlank(pose, 140, 135) && pose.elbowAngle >= 130 &&
+      pose.wrist.y - pose.shoulder.y >= pose.armLength * 0.52 &&
+      Math.abs(pose.wrist.x - pose.shoulder.x) <= pose.armLength * 0.78;
   }
   if (!pose.direction || pose.kneeAngle < 145 || pose.knee.y - pose.hip.y < 0.30 * pose.legLength) return false;
   if (pose.torsoLean > 30 || Math.abs(pose.thighAngle) > 20) return false;
@@ -144,7 +161,8 @@ function movement(pose, start, exercise) {
   if (exercise === 'push-up') {
     const drop = ((start.wrist.y - start.shoulder.y) - (pose.wrist.y - pose.shoulder.y)) / start.armLength;
     const hipDrop = ((pose.hip.y - pose.ankle.y) - (start.hip.y - start.ankle.y)) / legLength;
-    const plank = pushUpPlank(pose, 135);
+    // Every accepted top pose must also fit the looser moving-pose envelope.
+    const plank = pushUpPlank(pose, 130, 125);
     const bothToes = pose.trustedToe && start.trustedToe;
     const footMoved = bothToes ? distance(pose.trustedToe, start.trustedToe) > legLength * 0.20
       : Math.abs(pose.ankle.x - start.ankle.x) > legLength * 0.23;
@@ -236,6 +254,7 @@ export class MobilityTracker {
     this.reference = null;
     this.rep = null;
     this.nextRepId = 1;
+    this.continuous = false;
     this.shiftedAt = null;
     this.onset = null;
     this.clearStanding();
@@ -278,17 +297,19 @@ export class MobilityTracker {
     this.clearStanding();
   }
 
-  update({ landmarks, timestampMs: time, width, height, armed = true, lockStanding = armed }) {
+  update({ landmarks, timestampMs: time, width, height, armed = true, lockStanding = armed, continuous = false }) {
     const events = [];
     const checks = { inFrame: false, sideOn: false, standing: false, steady: false };
     const state = (message, live = null, ready = false) => ({
       phase: this.phase, setup: { ready, message, checks, progress: this.reference ? 1 : Math.min(1, this.standing.elapsed / STANDING_MS, this.standing.count / 7) },
       live, events, continuitySide: null,
     });
-    if (!Number.isFinite(time) || time <= (this.lastAt ?? -Infinity) || !(width > 0 && height > 0)) {
+    if (!Number.isFinite(time) || time <= (this.lastAt ?? -Infinity) ||
+        !Number.isFinite(width) || !Number.isFinite(height) || !(width > 0 && height > 0)) {
       return state('Waiting for the next camera frame.');
     }
     this.lastAt = time;
+    this.continuous = continuous === true;
     if (!armed && this.rep) this.discard(events, 'cancelled');
     if (!lockStanding) {
       this.reference = null;
@@ -340,7 +361,7 @@ export class MobilityTracker {
         this.phase = 'setup';
       }
       return state(checks.steady ? 'Side view ready.' : checks.standing ? 'Hold your starting position.' :
-        this.exercise === 'push-up' ? 'Start in a high plank with your arms extended.' : 'Move into the starting position.',
+        this.exercise === 'push-up' ? 'Hold your top push-up position; a slight elbow bend is okay.' : 'Move into the starting position.',
         checks.steady ? this.live(pose, 0) : null, checks.steady);
     }
 
@@ -488,7 +509,9 @@ export class MobilityTracker {
       },
       cues: [], frames: rep.frames,
     } });
-    this.reference = null;
+    // The finish hold has already confirmed this personal top position. Keep
+    // its geometry for the next rep of a set instead of recalibrating for 1s.
+    this.reference = this.continuous ? { ...this.reference, time: sample.time } : null;
     this.rep = null;
     this.phase = 'ready';
     this.clearStanding();

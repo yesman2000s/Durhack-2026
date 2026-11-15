@@ -112,17 +112,32 @@ def training_range(exercise):
 
 
 @cache
-def guide_horizontal_bounds(exercise, variant):
+def guide_body_bounds(exercise, variant):
     extent = training_range(exercise)
-    positions = [x for progress in (0, extent / 2, extent) for x, _ in guide_joints(exercise, progress, variant).values()]
-    return min(positions), max(positions)
+    positions = [point for progress in (0, extent / 4, extent / 2, extent * 0.75, extent)
+                 for point in guide_joints(exercise, progress, variant).values()]
+    # Include the head, tapered limbs, offset far side and barbell plates, not only joints.
+    body_margin = 0.14
+    return (min(x for x, _ in positions) - body_margin, max(x for x, _ in positions) + body_margin,
+            min(y for _, y in positions) - body_margin, max(y for _, y in positions) + body_margin)
+
+
+def guide_horizontal_bounds(exercise, variant):
+    return guide_body_bounds(exercise, variant)[:2]
+
+
+def _confidence(point):
+    if point is None:
+        return 0
+    return min(1 if (value := getattr(point, name, None)) is None else value if isfinite(value) else 0
+               for name in ("visibility", "presence"))
 
 
 def _foot_positions(landmarks, offset, width, confidence=0.50):
     return {
         index: point.x * width for index in FOOT_X_INDICES
         if (point := landmarks[index + offset]) is not None
-        and (point.visibility if point.visibility is not None else 1) >= confidence
+        and _confidence(point) >= confidence
         and 0 <= point.x <= 1 and 0 <= point.y <= 1
     }
 
@@ -174,14 +189,14 @@ def starting_guide_anchor(landmarks, live, width, height, exercise, timestamp_ms
     offset = int(live["side"] == "right")
     nose = landmarks[0]
     shoulder, hip, knee, ankle, heel, toe = (landmarks[index + offset] for index in (11, 23, 25, 27, 29, 31))
-    if not all(isfinite(p.x) and isfinite(p.y) for p in (hip, knee, ankle)):
+    if not all(p is not None and _confidence(p) >= 0.35 and isfinite(p.x) and isfinite(p.y) for p in (hip, knee, ankle)):
         return None
     leg = hypot((hip.x - knee.x) * width, (hip.y - knee.y) * height) + \
         hypot((knee.x - ankle.x) * width, (knee.y - ankle.y) * height)
     if leg <= 0:
         return None
     def visible(point):
-        return point is not None and (point.visibility or 0) >= 0.35 and 0 <= point.x <= 1 and 0 <= point.y <= 1
+        return _confidence(point) >= 0.35 and 0 <= point.x <= 1 and 0 <= point.y <= 1
 
     toe_visible = visible(toe)
     if exercise == "push-up":
@@ -204,15 +219,21 @@ def starting_guide_anchor(landmarks, live, width, height, exercise, timestamp_ms
             break
     if direction is None:
         return None
+    crop_left, crop_width = crop if crop is not None else (0, width)
+    min_x, max_x, min_y, max_y = guide_body_bounds(exercise, variant)
+    padding = min(max(13, leg * 0.04), crop_width / 4, height / 4)
+    leg = min(leg, (crop_width - 2 * padding) / (max_x - min_x),
+              (height - 2 * padding) / (max_y - min_y))
+    if leg <= 0:
+        return None
     origin = toe if exercise in ("push-up", "heel-raise") and toe_visible else ankle
     x, y = origin.x * width, origin.y * height
     if origin is ankle and exercise == "heel-raise":
         model_ankle = guide_joints(exercise, 0)["ankle"]
         x -= direction * model_ankle[0] * leg
         y -= model_ankle[1] * leg
-    crop_left, crop_width = crop if crop is not None else (0, width)
-    model_x = [x + direction * leg * dx for dx in guide_horizontal_bounds(exercise, variant)]
-    padding = max(13, leg * 0.055)
+    y = min(height - padding - max_y * leg, max(padding - min_y * leg, y))
+    model_x = [x + direction * leg * dx for dx in (min_x, max_x)]
     minimum = crop_left + padding - min(model_x)
     maximum = crop_left + crop_width - padding - max(model_x)
     rear = 0 if exercise == "push-up" else -direction * leg * 0.18

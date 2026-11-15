@@ -26,11 +26,31 @@ function overlayFixture(t) {
   });
 
   const lineEndpoints = [];
+  const capsules = [];
+  const ellipses = [];
+  const circles = [];
+  let path = [];
+  let bodyFills = 0;
   let clears = 0;
   const ctx = {
-    clearRect() { clears++; lineEndpoints.length = 0; },
-    lineTo(x, y) { lineEndpoints.push([x, y]); },
-    beginPath() {}, moveTo() {}, arc() {}, setLineDash() {}, stroke() {}, fill() {},
+    clearRect() { clears++; lineEndpoints.length = capsules.length = ellipses.length = circles.length = 0; bodyFills = 0; },
+    lineTo(x, y) { lineEndpoints.push([x, y]); path.push([x, y]); },
+    beginPath() { path = []; },
+    moveTo(x, y) { path = [[x, y]]; },
+    quadraticCurveTo(cx, cy, x, y) { path.push([x, y]); },
+    bezierCurveTo() { path.push(null); },
+    closePath() {
+      if (path.length === 5 && path.every(Boolean)) {
+        const midpoint = (a, b) => a.map((v, i) => (v + b[i]) / 2);
+        capsules.push({ from: midpoint(path[0], path[3]), to: midpoint(path[1], path[2]) });
+      }
+      path = [];
+    },
+    ellipse(...args) { ellipses.push(args); },
+    arc(x, y, radius) { circles.push([x, y, radius]); },
+    setLineDash() {}, stroke() {},
+    fill() { if (this.fillStyle?.startsWith('rgba')) bodyFills++; },
+    save() {}, restore() {},
   };
   const canvas = { width: 960, height: 540, getContext: () => ctx };
   const overlay = createTrainingOverlay(canvas);
@@ -40,7 +60,8 @@ function overlayFixture(t) {
     pending.delete(id);
     callback(ms);
   };
-  return { canvas, overlay, step, pending, lineEndpoints, clearCount: () => clears };
+  return { canvas, overlay, step, pending, lineEndpoints, capsules, ellipses, circles,
+    bodyFillCount: () => bodyFills, clearCount: () => clears };
 }
 
 test('training overlay draws one exercise, preserves source landmarks and clears on cancel', (t) => {
@@ -74,13 +95,13 @@ test('training overlay draws one exercise, preserves source landmarks and clears
 });
 
 test('squat illustration follows reliable horizontal foot motion and holds its floor through dropped frames', (t) => {
-  const { overlay, step, lineEndpoints } = overlayFixture(t);
+  const { overlay, step, circles } = overlayFixture(t);
   const width = 960;
   const height = 540;
   const standing = demoLandmarks(0);
   const frame = { landmarks: standing, width, height, crop: { left: 220, width: 520 } };
   const update = (timestampMs, landmarks, side = 'left') => overlay.update({ ...frame, timestampMs, landmarks }, side);
-  const ankle = () => lineEndpoints[5];
+  const ankle = () => circles[3].slice(0, 2);
   function steppedPose(left, right, foot) {
     const pose = demoLandmarks(.72);
     for (const [sideOffset, distance] of [[0, left], [1, right]]) {
@@ -129,7 +150,7 @@ test('squat illustration follows reliable horizontal foot motion and holds its f
 });
 
 test('the floor push-up guide lowers around fixed contacts and mirrors with the tracked side', (t) => {
-  const { overlay, step, lineEndpoints } = overlayFixture(t);
+  const { overlay, step, capsules } = overlayFixture(t);
   const width = 960;
   const height = 540;
   for (const [index, side, offset] of [[0, 'left', 0], [1, 'right', 1]]) {
@@ -138,9 +159,13 @@ test('the floor push-up guide lowers around fixed contacts and mirrors with the 
     assert.equal(overlay.start({ landmarks, width, height }, side, 'push-up'), true);
     const start = index * 2100;
     step(start);
-    const [startingShoulder, , wrist, , , , , toe] = structuredClone(lineEndpoints);
+    const startingShoulder = [...capsules[12].from];
+    const wrist = [...capsules[13].to];
+    const toe = [...capsules[11].to];
     step(start + 2100);
-    const [bottomShoulder, , bottomWrist, , , , , bottomToe] = lineEndpoints;
+    const bottomShoulder = capsules[12].from;
+    const bottomWrist = capsules[13].to;
+    const bottomToe = capsules[11].to;
 
     assert.ok(bottomShoulder[1] > startingShoulder[1] + 35);
     assert.deepEqual(bottomWrist, wrist);
@@ -150,6 +175,27 @@ test('the floor push-up guide lowers around fixed contacts and mirrors with the 
     assert.ok(Math.abs(toe[1] - landmarks[31 + offset].y * height) < .1);
     overlay.clear();
   }
+});
+
+test('human guide has a filled body, head and two articulated arms and legs for every exercise', (t) => {
+  const { overlay, capsules, ellipses, bodyFillCount } = overlayFixture(t);
+  for (const exercise of ['squat', 'push-up', 'knee-raise', 'heel-raise']) {
+    const landmarks = exercise === 'squat' ? demoLandmarks(0) : mobilityDemoLandmarks(0, exercise);
+    assert.equal(overlay.start({ width: 960, height: 540, landmarks }, 'left', exercise,
+      'bodyweight', undefined, { manual: true }), true);
+    overlay.renderAt(2100);
+    assert.equal(capsules.length, 15, `${exercise}: seven limbs/contacts per side plus neck`);
+    assert.equal(ellipses.length, 1, `${exercise}: an oval head`);
+    assert.ok(bodyFillCount() >= 2, `${exercise}: translucent body layers`);
+    assert.ok(ellipses[0][3] > ellipses[0][2]);
+  }
+});
+
+test('guide cannot anchor to high-visibility joints whose presence is unreliable', (t) => {
+  const { overlay } = overlayFixture(t);
+  const landmarks = demoLandmarks(0);
+  landmarks[23].presence = .1;
+  assert.equal(overlay.start({ width: 960, height: 540, landmarks }, 'left', 'squat'), false);
 });
 
 test('source-time playback shows a guide with an obscured toe and supports backward scrubbing', (t) => {

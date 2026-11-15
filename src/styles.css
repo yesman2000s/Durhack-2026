@@ -541,6 +541,29 @@ button:enabled { cursor: pointer; }
   accent-color: var(--mint);
 }
 
+.coaching-options, .coaching-live { flex: 1 0 100%; min-width: 0; }
+.coaching-options { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.coaching-options p { flex: 1 1 290px; margin: 0; font-size: .8rem; line-height: 1.4; color: var(--studio-muted); }
+.coaching-live { padding: 12px 15px; border: 1px solid #82d8b552; border-radius: 12px; color: var(--on-ink); background: #142923; }
+.coaching-live strong { color: var(--mint); font-size: .85rem; }
+.coaching-live p { margin: 5px 0; font-size: .95rem; line-height: 1.45; }
+.coaching-live > span { font-size: .8rem; color: var(--studio-muted); }
+.text-button { border: 0; padding: 4px; color: inherit; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.set-ending { position: absolute; z-index: 5; bottom: 12px; right: 12px; max-width: calc(100% - 24px); padding: 7px 11px; border-radius: 8px; color: #ffe0a0; background: #211d13ed; font-size: .85rem; }
+.set-results { padding: clamp(18px, 2.5vw, 30px); border: 1px solid var(--line); border-radius: 20px; background: #fff; }
+.set-results h2 { margin: 0; font-size: 1.3rem; }
+.set-results p { color: var(--muted); }
+.set-rep-list { display: grid; gap: 8px; max-height: 380px; overflow-y: auto; }
+.set-rep { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--surface-soft); text-align: left; font: inherit; cursor: pointer; }
+.set-rep strong, .set-rep b { flex: 0 0 auto; }
+.set-rep span { flex: 1; font-size: .9rem; overflow-wrap: anywhere; }
+.set-rep[aria-pressed="true"] { border-color: var(--blue); background: #eff3ff; }
+
+@media (max-width: 760px) {
+  .coaching-options, .coaching-live { grid-column: 1 / -1; }
+  .coaching-options .training-toggle { min-height: 32px; }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .button-primary:enabled:hover { background: var(--blue-hover); }
   .button-secondary:enabled:hover { background: var(--surface-soft); }
@@ -854,7 +877,13 @@ button:enabled { cursor: pointer; }
   color: #ffe0a0;
 }
 
-.training-tag .guide-key::before { border-top-style: dashed; }
+.training-tag .guide-key::before {
+  width: .7em;
+  height: 1em;
+  border: 1px solid currentColor;
+  border-radius: 45% 45% 30% 30%;
+  background: #ffd58c38;
+}
 
 .viewport:has(video[controls]) .training-tag { inset-block-end: 56px; }
 

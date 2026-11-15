@@ -34,6 +34,10 @@ function rapidMotion(downMs, upMs, amplitude = 1) {
 const fixtures = [
   { name: "left profile", expectedSide: "left" },
   { name: "brief loss", loss: [3440, 3560], expectedSide: "left" },
+  {
+    name: "brief low-presence tracked joint", expectedSide: "left",
+    adjust(landmarks, _depth, time) { if (time >= 3440 && time < 3560) landmarks[25].presence = 0.1; },
+  },
   { name: "long loss", loss: [3440, 3920], expectedDiscard: "tracking-gap" },
   { name: "right profile", mirror: true, expectedSide: "right" },
   {

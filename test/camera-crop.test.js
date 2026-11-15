@@ -18,7 +18,7 @@ test('maps the centered landscape crop to the full snapshot without stretching i
   assert.equal(landmarks[1].visibility, 0.9);
 });
 
-test('the setup guide accepts a central stance and leaves portrait cameras unchanged', () => {
+test('the setup guide accepts usable off-center stances and leaves portrait cameras unchanged', () => {
   const landmarks = [];
   landmarks[23] = { x: 0.48, visibility: 0.9 };
   landmarks[27] = { x: 0.52, visibility: 0.9 };
@@ -26,12 +26,24 @@ test('the setup guide accepts a central stance and leaves portrait cameras uncha
   assert.equal(poseInCenter(landmarks, 1280, crop), true);
   landmarks[23].x = 0.28;
   landmarks[27].x = 0.3;
+  assert.equal(poseInCenter(landmarks, 1280, crop), true);
+  landmarks[23].x = 0.18;
+  landmarks[27].x = 0.2;
   assert.equal(poseInCenter(landmarks, 1280, crop), false);
 
   const portraitCrop = centerCameraCrop(450, 800);
   assert.deepEqual(portraitCrop, { left: 0, width: 450 });
   assert.equal(poseInCenter(landmarks, 450, portraitCrop), true);
   assert.equal(sourceLandmarks(landmarks, 450, portraitCrop), landmarks);
+});
+
+test('setup centering uses the present leg when the other leg is an uncertain guess', () => {
+  const landmarks = [];
+  landmarks[23] = { x: .2, visibility: .99, presence: .1 };
+  landmarks[27] = { x: .2, visibility: .99, presence: .1 };
+  landmarks[24] = { x: .5, visibility: .8, presence: .9 };
+  landmarks[28] = { x: .5, visibility: .8, presence: .9 };
+  assert.equal(poseInCenter(landmarks, 1280, centerCameraCrop(1280, 720)), true);
 });
 
 test('inference can see limbs beyond the tighter preview without shifting capture coordinates', () => {

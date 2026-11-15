@@ -1,6 +1,6 @@
 # Durhack-2026 · COMPOSE mobility camera
 
-Standalone browser and Python tools for capturing one exercise rep from the side. The camera checks your setup, counts down, selects snapshots across the rep, and records a pose trace for skeleton playback. For a squat, the first valid rep becomes your baseline for that camera session.
+Standalone browser and Python tools for capturing exercise reps from the side. The camera checks your setup, counts down, selects snapshots across each rep, and records a pose trace for skeleton playback. The browser supports one rep or a full set, with automatic Gemini form feedback and optional ElevenLabs speech after each rep. For a squat, the first valid rep becomes your baseline for that camera session.
 
 | Exercise | Why it is included | Practice reference |
 | --- | --- | --- |
@@ -18,11 +18,13 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use the address Vite prints. Choose an **Exercise**, then select **Start camera** or **Try simulated example**. Squat has **Bodyweight** and **Barbell** variants. The camera runs on localhost or HTTPS. The [MediaPipe Pose Landmarker Lite model](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker) and runtime are served locally.
+Open [http://localhost:5173](http://localhost:5173) in Chrome or Edge, or use the address Vite prints. Choose **One rep** or **Full set** and an **Exercise**, then select **Start camera** or **Try simulated example**. Squat has **Bodyweight** and **Barbell** variants. The camera runs on localhost or HTTPS. The [MediaPipe Pose Landmarker Lite model](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker) and runtime are served locally.
+
+In **Full set**, the countdown runs once and each completed rep is saved and sent for coaching while tracking continues. Choose **End set** at any time, or let the app finish after 12 seconds without another tracked movement. An incomplete attempt does not add a rep. A session with no detected movement times out after 45 seconds. The simulated full set performs three reps and then demonstrates automatic ending. Select a rep in the set history to review its snapshots and feedback; **Download set data** exports every completed rep.
 
 The camera stage takes up the first screen. Choose **Full screen** to hide the browser chrome where supported. The preview preserves the camera's height so you can keep your head and feet in frame. Choose **Review rep** after capture to open the snapshots and skeleton playback.
 
-To analyze a recording, choose the exercise and select **Upload video**. A side view with the whole body visible works best. Leave about a second in the starting pose and hold briefly at the finish. The app scans for the first complete rep using the full frame and the clip's own clock. Choose **Play rep with guide** to see the amber example and your mint skeleton move together over the clip. MP4 (H.264) and WebM are good starting formats. The clip stays on your device.
+To analyze a recording, choose the exercise, capture mode, and **Upload video**. A side view with the whole body visible works best. Leave about a second in the starting pose and hold briefly at the finish. The app scans for the first complete rep or a set using the full frame and the clip's own clock. A set also ends at the end of the clip. Choose **Play rep with guide** on the latest rep to see the amber example and your mint skeleton move together over the clip. MP4 (H.264) and WebM are good starting formats. The original clip stays on your device; completed rep images and measurements are sent to Gemini for coaching.
 
 ## Try the music studio
 
@@ -61,8 +63,8 @@ Use `--video` to analyze a local recording. The app saves the first complete rep
 ## Capture a rep
 
 1. Set the laptop on a stable surface to see you from the side. For a push-up, position the camera low enough to see your head, hands and toes. For the standing exercises, keep your head and feet visible.
-2. Hold your starting position for at least one second. Start push-ups in a high plank and start the other exercises standing. As soon as the camera confirms one steady second, it saves your pose and starts a two-second countdown to **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
-3. Perform one movement through a comfortable range. Stand back up after a squat, or return to the starting position for another exercise, and hold briefly to finish. The squat measures knee bend and hip motion relative to the feet, so shifting your stance does not end a rep by itself. **Training overlay** starts on by default in the browser. Its dashed amber guide demonstrates a rep at Go and stays visible until capture ends. The solid mint skeleton shows the tracked pose.
+2. Hold your starting position for at least one second. Start push-ups near the top of a floor plank; a slight elbow bend, natural hip height, and a modest camera angle are okay. The tracker uses your own starting pose for the return, rather than requiring locked elbows or an exact model pose. Start the other exercises standing. As soon as the camera confirms one steady second, it saves your pose and starts a two-second countdown to **Go**. If you begin after setup passes, tracking can start during the countdown. The browser and Windows desktop app also play a brief Go sound.
+3. Perform one movement through a comfortable range. Stand back up after a squat, or return to the starting position for another exercise, and hold briefly to finish. The squat measures knee bend and hip motion relative to the feet, so shifting your stance does not end a rep by itself. **Training overlay** starts on by default in the browser. Its translucent amber human silhouette demonstrates a rep at Go and stays visible until capture ends. The solid mint skeleton shows the tracked pose. The guide illustrates a movement; tracking does not require you to match its angles or timing.
 4. Review the five snapshots. Use **Play skeleton** and the time slider in the browser, or **P** in Python, to replay the tracked movement. The browser's **Download rep data** button and Python's **E** key save a local JSON file. Until export, the latest rep is held in memory.
 
 The side-view example shows how the hips, knees, and torso move. It scales the sketch using estimated thigh-to-shin and torso-to-leg ratios and lets you choose a range. Your first rep records your own comfortable range. A camera view and body proportions alone cannot determine an ideal or safe depth. The detector needs visible movement to distinguish a squat from a small posture change; a shallow or interrupted attempt may not count.
@@ -79,17 +81,19 @@ Push-up measures the elbow bend relative to the high plank. Knee raise measures 
 
 **Thigh to shin** divides the visible hip-to-knee length by the knee-to-ankle length for the same leg. Snapshot poses and motion trace frames report the ratio for that image. The rep summary uses the median of usable measurements from the start of movement to the return to standing, with the standing ratio as a fallback. These are lengths projected onto the camera image. A more angled view can change the estimate.
 
-The camera targets 12 pose measurements per second. The live skeleton eases between those measurements while the tracker and evidence use observed frames. The lowering and rising snapshots use the closest available frames to halfway through the hip travel in each phase. The bottom image is the deepest observed pose, based on the hip drop and knee bend together. A fast movement can pass between samples. If the camera misses a phase, its photo is omitted.
+The camera targets 12 pose measurements per second. Each live sample freezes the full camera image before detection, keeping its selected snapshot and joints aligned. JPEGs preserve up to 1280 pixels on the longest edge without enlarging smaller sources. The live skeleton eases between those measurements while the tracker and evidence use observed frames. Both joint visibility and presence confidence are checked, with generous checks against the person's own setup proportions to exclude implausible joint jumps. Slightly angled views and natural variation remain supported; a clear side view gives more useful measurements. The lowering and rising snapshots use the closest available frames to halfway through the hip travel in each phase. The bottom image is the deepest observed pose, based on the hip drop and knee bend together. A fast movement can pass between samples. If the camera misses a phase, its photo is omitted.
 
 The metrics include lowering and rising time, pause, mean and peak projected vertical hip speed relative to the feet, knee bend and return angle, bottom hip, torso and shin angles, estimated standing proportions, and tracking quality. Speed is scaled to the projected standing leg length, so it is in leg lengths per second. Missing or low-quality poses are excluded. View angle, clothing, lighting and camera position can all affect these estimates. A side view cannot assess side-to-side knee alignment, spinal loading, or overall safety.
 
-The JPEGs may identify the person in the recording. Capture and review run locally. **Score this rep** sends the selected rep’s snapshots and measurements to Google Gemini. A downloaded export contains the images and measurements.
+The JPEGs may identify the person in the recording. Pose tracking runs locally. Completing a browser rep automatically sends its snapshots, measurements, motion trace and recent set context to Google Gemini. ElevenLabs receives only the feedback narration text. A downloaded export contains the images and measurements. Browser set exports include the session ID, end reason, rep order and any feedback received before export. Reps remain in memory until a new session or page reload, so download a set to retain it.
 
-## Score squat form with Gemini
+## Coach each rep with Gemini
 
-Set the server-side `GEMINI_API_KEY` environment variable or put `GEMINI_API_KEY=<your key>` in the ignored `.env.local` file. The default model is `gemini-3.6-flash`. Set `GEMINI_MODEL` to use another Gemini 3 model that supports image input and structured output. Restart Vite after changing the configuration.
+Copy `.env.example` to the ignored `.env.local` file and fill in `GEMINI_API_KEY` and `ELEVENLABS_API_KEY`, or set them as server environment variables. Do not prefix these keys with `VITE_`. The default model is [Gemini 3.6 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash). Set `GEMINI_MODEL` to use another compatible Gemini 3 model supporting image input, structured output and low thinking. Restart Vite after changing the configuration.
 
-Run `npm.cmd run dev`, capture a squat or use **Try simulated example**, and click **Score this rep**. The practice rubric combines tempo, range of motion, visible control, and return to stance. It uses the previous rep’s personal range when available and treats two seconds down and one second up as flexible drill targets.
+Run `npm.cmd run dev`, capture any supported exercise or use **Try simulated example**. Every completed rep automatically enters the review queue. Gemini receives all captured phase JPEGs and pose metadata, confidence values, the timestamped motion trace, metrics, reference, practice guide and up to five recent rep summaries with available feedback. Exercise-specific prompts ask for evidence-based improvements for the next rep, allow natural body proportions and modest camera angles, and treat uncertain tracking as uncertainty rather than poor form. Simulated inputs are identified as examples. The prompt and rubrics live in [server/form-scoring.js](server/form-scoring.js).
+
+Two reviews can run concurrently while capture continues. Each rep keeps its written feedback or a retryable error. Starting a new session cancels the previous session's pending coaching. Manual or automatic set ending keeps already queued reviews running.
 
 For other integrations, send a browser or Python rep export directly to the same endpoint:
 
@@ -97,19 +101,19 @@ For other integrations, send a browser or Python rep export directly to the same
 curl.exe -X POST http://localhost:5173/api/form-score -H "Content-Type: application/json" --data-binary "@captures/rep.json"
 ```
 
-The response contains an integer score from 0 to 100 and up to three short, speech-ready cues. For example:
+The response contains a provisional practice score from 0 to 100, a short summary and up to two speech-ready cues for the next rep. For example:
 
 ```json
-{"score": 84, "tips": ["Take about two seconds to lower.", "Finish each rep standing tall."]}
+{"score": 84, "summary": "Your return was controlled; the lowering phase was quicker.", "tips": ["Lower a little more slowly on your next rep."]}
 ```
 
-When Gemini needs clearer evidence, `score` is `null` and `tips` contains a filming cue. The endpoint accepts up to 12 MiB of JSON and sends Gemini the phase JPEGs, timings, and selected numeric measurements. The exercise definitions and rubrics live in [server/form-scoring.js](server/form-scoring.js).
+When Gemini needs clearer evidence, `score` is `null` and it can return one filming cue. This is coaching from imperfect 2D evidence, not a medical or safety assessment. The endpoint validates up to 12 MiB of JSON, five JPEGs and 400 ordered motion frames. An optional `session` object contains `id`, `mode` (`single-rep` or `set`), `repNumber` and `previousReps`. Existing browser and Python rep exports remain accepted.
 
 ## Hear the feedback
 
-Add `ELEVENLABS_API_KEY=<your key>` to `.env.local` and restart Vite. The default voice is George. Set `ELEVENLABS_VOICE_ID` to select another voice. After **Score this rep** returns, the score and tips appear on screen and play aloud automatically. If the browser blocks autoplay, an audio control appears.
+Add `ELEVENLABS_API_KEY=<your key>` to `.env.local` and restart Vite. The default voice is George using [Eleven Flash v2.5](https://elevenlabs.io/docs/overview/models/). Set `ELEVENLABS_VOICE_ID` to select another voice. **Spoken feedback** starts enabled and can be muted during capture. The rep number, summary and tips play when analysis completes. If the browser blocks autoplay, choose **Play coaching audio**.
 
-`POST /api/form-speech` accepts the `{score, tips}` returned by `/api/form-score` and responds with `audio/mpeg`. ElevenLabs receives only the narration text.
+Speech never overlaps. If reviews arrive faster than they can be spoken, the next audio uses the newest feedback and older unsounded cues are skipped; all written reviews remain available. `POST /api/form-speech` accepts the `{score, summary, tips}` returned by `/api/form-score`, plus optional `repNumber`, and responds with `audio/mpeg`. The legacy `{score, tips}` payload remains supported. ElevenLabs receives only the narration text.
 
 Vite dev and preview serve both APIs from the same origin. Static deployments of `dist/` need a server mounting `formScoringRoute` and `feedbackSpeechRoute` at the same origin. Keep both routes behind application authentication and rate limits if deploying beyond localhost.
 

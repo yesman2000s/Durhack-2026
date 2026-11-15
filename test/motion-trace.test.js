@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeMotionTrace, poseAtTime, recordPose } from '../src/motion-trace.js';
+import { isPlaybackJointVisible, makeMotionTrace, poseAtTime, recordPose, traceJoints } from '../src/motion-trace.js';
 import { demoLandmarks } from '../src/demo.js';
 
 test('keeps the original standing sample and finishes the trace on the captured return', () => {
@@ -57,4 +57,22 @@ test('replay leaves an unreliable joint out of interpolated poses', () => {
   const joints = poseAtTime(frames, 40);
   assert.ok(joints.hip);
   assert.equal(joints.knee, undefined);
+});
+
+test('capture and replay preserve presence so an uncertain optional joint stays hidden', () => {
+  const landmarks = demoLandmarks(0);
+  landmarks[15].presence = .12;
+  landmarks[13].visibility = NaN;
+  landmarks[23].presence = .8;
+  const joints = traceJoints(landmarks, 'left');
+  assert.equal(joints.wrist.presence, .12);
+  assert.equal(isPlaybackJointVisible('wrist', joints.wrist), false);
+  assert.equal(isPlaybackJointVisible('elbow', joints.elbow), false);
+  const frames = [
+    { offsetMs: 0, joints },
+    { offsetMs: 80, joints: { ...joints, hip: { ...joints.hip, presence: .7 } } },
+  ];
+  assert.equal(poseAtTime(frames, 40).wrist, undefined);
+  assert.equal(poseAtTime(frames, 40).hip.presence, .7);
+  assert.equal(isPlaybackJointVisible('hip', { x: .5, y: .5, visibility: .9, presence: NaN }), false);
 });

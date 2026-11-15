@@ -5,7 +5,8 @@ export function measureThighToShin({ landmarks, width, height }, side) {
   if (!indices || ![width, height].every((size) => Number.isFinite(size) && size > 0)) return null;
   const [hip, knee, ankle] = indices.map((index) => landmarks?.[index]);
   if (![hip, knee, ankle].every((point) => point && Number.isFinite(point.x)
-    && Number.isFinite(point.y) && (point.visibility ?? 1) >= 0.35)) return null;
+    && Number.isFinite(point.y) && [point.visibility ?? 1, point.presence ?? 1]
+      .every((confidence) => Number.isFinite(confidence) && confidence >= 0.35))) return null;
 
   const distance = (a, b) => Math.hypot((a.x - b.x) * width, (a.y - b.y) * height);
   const thigh = distance(hip, knee);

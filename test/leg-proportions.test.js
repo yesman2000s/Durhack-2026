@@ -23,6 +23,16 @@ test('measures both segments in source pixels on the tracked side', () => {
   assert.equal(measureThighToShin(widescreen, 'right'), null);
 });
 
+test('does not measure a high-visibility leg with low or invalid presence confidence', () => {
+  const sample = frame(0);
+  for (const presence of [.1, NaN, Infinity]) {
+    sample.landmarks[26].presence = presence;
+    assert.equal(measureThighToShin(sample, 'right'), null);
+  }
+  sample.landmarks[26].presence = .9;
+  assert.equal(measureThighToShin(sample, 'right'), 1.778);
+});
+
 test('exports a per-image ratio and uses the median during movement for the rep', () => {
   const live = { side: 'right' };
   const trace = [];

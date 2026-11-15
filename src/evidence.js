@@ -21,7 +21,11 @@ export function framePose(frame, live) {
   }).flatMap(([joint, index]) => {
     const point = frame.landmarks?.[index];
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return [];
-    return [[joint, { x: point.x, y: point.y, visibility: Number.isFinite(point.visibility) ? point.visibility : null }]];
+    return [[joint, {
+      x: point.x, y: point.y,
+      visibility: point.visibility == null ? null : Number.isFinite(point.visibility) ? point.visibility : 0,
+      ...(point.presence != null ? { presence: Number.isFinite(point.presence) ? point.presence : 0 } : {}),
+    }]];
   }));
   return {
     side: live.side,
@@ -37,16 +41,22 @@ export function framePose(frame, live) {
   };
 }
 
-export function captureImage(source, width, height, canvas = document.createElement('canvas')) {
-  const scale = Math.min(1, 960 / Math.max(width, height));
+export function captureImage(source, width, height, canvas) {
+  if (!source || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  if ('readyState' in source && source.readyState < 2) return null;
+  canvas ??= document.createElement('canvas');
+  // Preserve a 720p source without enlarging smaller frames.
+  const scale = Math.min(1, 1280 / Math.max(width, height));
   const captureWidth = Math.max(1, Math.round(width * scale));
   const captureHeight = Math.max(1, Math.round(height * scale));
   if (canvas.width !== captureWidth) canvas.width = captureWidth;
   if (canvas.height !== captureHeight) canvas.height = captureHeight;
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return null;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  const url = canvas.toDataURL('image/jpeg', 0.84);
+  const url = canvas.toDataURL('image/jpeg', 0.9);
   if (!url.startsWith('data:image/jpeg;base64,')) return null;
   return { url, width: canvas.width, height: canvas.height };
 }

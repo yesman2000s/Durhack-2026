@@ -46,7 +46,11 @@ function leanAngle(upper, lower) {
 function pointAt(landmarks, index, width, height) {
   const point = landmarks?.[index];
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return null;
-  return { x: point.x * width, y: point.y * height, visibility: point.visibility ?? 1 };
+  // Visibility describes occlusion; presence separately describes whether the
+  // model believes this joint exists. Both must support a measurement.
+  const confidence = [point.visibility ?? 1, point.presence ?? 1];
+  const visibility = confidence.every(Number.isFinite) ? clamp(Math.min(...confidence), 0, 1) : 0;
+  return { x: point.x * width, y: point.y * height, visibility };
 }
 
 function readSide(landmarks, side, width, height) {
@@ -333,9 +337,10 @@ export class SquatTracker {
     this.attempt = null;
     this.onsetAt = null;
     this.nextRepId = 1;
+    this.continuous = false;
   }
 
-  update({ landmarks, timestampMs, width, height, armed = true, lockStanding = armed }) {
+  update({ landmarks, timestampMs, width, height, armed = true, lockStanding = armed, continuous = false }) {
     const events = [];
     const checks = { inFrame: false, sideOn: false, standing: false, steady: false };
     const state = (message, live = null, progress = 0, ready = false, continuitySide = null) => ({
@@ -346,11 +351,12 @@ export class SquatTracker {
       continuitySide,
     });
     if (!Number.isFinite(timestampMs) || timestampMs <= (this.lastTime ?? -Infinity) ||
-        !(width > 0) || !(height > 0)) {
+        !Number.isFinite(width) || !Number.isFinite(height) || !(width > 0) || !(height > 0)) {
       return state("Waiting for the next camera frame.");
     }
 
     const previousFrameTime = this.lastTime;
+    this.continuous = continuous === true;
     this.lastTime = timestampMs;
     if (!armed) {
       if (this.attempt) this.discard(events, "cancelled");
@@ -713,7 +719,9 @@ export class SquatTracker {
     events.push({ type: "rep-complete", rep: formatRep(rep, sample, this.baseline) });
     this.attempt = null;
     this.phase = "ready";
-    this.captureStandingReady = false;
+    // A completed rep already includes a confirmed return hold. During a set
+    // keep the calibrated stance ready for the next cycle without another setup.
+    this.captureStandingReady = this.continuous;
     this.lastStandingAt = settled ? sample.time : null;
     this.onsetAt = null;
   }

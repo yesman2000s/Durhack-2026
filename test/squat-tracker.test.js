@@ -128,6 +128,37 @@ test("calibrates after a full second and keeps five ordered phases through a com
   assert.equal(states.at(-1).phase, "ready");
 });
 
+test("landmark presence and finite confidence are required for calibration and evidence", () => {
+  for (const estimates of [{ presence: 0.1 }, { presence: NaN }, { visibility: Infinity }]) {
+    const { states, events } = run({ points(depth) {
+      const landmarks = demoLandmarks(depth);
+      for (const index of [25, 26]) Object.assign(landmarks[index], estimates);
+      return landmarks;
+    } });
+    assert.ok(states.every(({ setup }) => !setup.ready));
+    assert.equal(events.length, 0);
+  }
+  const missedAt = 3360;
+  const { events } = run({ points(depth, time) {
+    const landmarks = demoLandmarks(depth);
+    if (time === missedAt) landmarks[25].presence = 0.1;
+    return landmarks;
+  } });
+  const rep = events.find(({ type }) => type === 'rep-complete')?.rep;
+  assert.ok(rep);
+  assert.ok(rep.metrics.validFrameFraction < 1);
+  assert.ok(!events.some(({ type, timestampMs }) => type === 'capture-candidate' && timestampMs === missedAt));
+});
+
+test("invalid camera dimensions do not advance the frame clock or corrupt calibration", () => {
+  const tracker = new SquatTracker();
+  const frame = { landmarks: demoLandmarks(0), timestampMs: 0, width: 960, height: 540 };
+  assert.equal(tracker.update({ ...frame, height: Infinity }).setup.ready, false);
+  assert.equal(tracker.lastTime, null);
+  for (let timestampMs = 0; timestampMs <= 1040; timestampMs += 80) tracker.update({ ...frame, timestampMs });
+  assert.equal(tracker.phase, 'ready');
+});
+
 test("rejects a front-facing setup and does not start an unarmed rep", () => {
   const front = run({
     points(depth) {

@@ -142,7 +142,8 @@ export function drawPose(canvas, { landmarks, width: sourceWidth, height, crop, 
       else if (index >= 23 && index <= 27) minimum = uncertain ? 0.25 : 0.35;
       else if (showArms || exercise === 'heel-raise') minimum = 0.38;
     }
-    return point && (point.visibility ?? 1) >= minimum && x(point) > 0 && x(point) < width && point.y > 0 && point.y < 1;
+    return point && [point.visibility ?? 1, point.presence ?? 1].every((value) => Number.isFinite(value) && value >= minimum)
+      && x(point) > 0 && x(point) < width && point.y > 0 && point.y < 1;
   }
   const size = Math.max(4.5, Math.min(width, height) / 86);
   ctx.lineCap = 'round';

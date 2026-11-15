@@ -1,5 +1,6 @@
-import { createLandmarker } from './camera.js';
 import { POSE_SAMPLE_INTERVAL_MS } from './pose-cadence.js';
+
+const loadLandmarker = async () => (await import('./camera.js')).createLandmarker();
 
 const MEDIA_WAIT_MS = 15000;
 const END_GUARD_MS = 1;
@@ -24,7 +25,7 @@ function waitForMedia(video, event, signal, perform) {
   });
 }
 
-export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError }) {
+export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError, landmarkerFactory = loadLandmarker }) {
   let running = null;
   let url = null;
 
@@ -34,6 +35,7 @@ export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError
     running = null;
     session.controller.abort();
     session.landmarker?.close();
+    session.landmarker = null;
   }
 
   function stop() {
@@ -61,6 +63,7 @@ export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError
         signal.throwIfAborted();
         const result = session.landmarker.detectForVideo(video, timestampMs);
         onProgress?.(timestampMs, durationMs);
+        if (signal.aborted) return;
         onFrame({
           landmarks: result.landmarks[0] ?? null,
           timestampMs,
@@ -83,6 +86,7 @@ export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError
   }
 
   async function start(file) {
+    stop();
     const session = { controller: new AbortController(), landmarker: null };
     running = session;
     const { signal } = session.controller;
@@ -97,7 +101,7 @@ export function createVideoAnalysis(video, { onFrame, onProgress, onEnd, onError
       if (!(Number.isFinite(durationMs) && durationMs > 0 && video.videoWidth > 0 && video.videoHeight > 0)) {
         throw new Error('This file has no readable video or duration. Try an MP4 (H.264) or WebM.');
       }
-      const landmarker = await createLandmarker().catch((cause) => {
+      const landmarker = await landmarkerFactory().catch((cause) => {
         throw new Error('The pose model could not load. Refresh the app and try again.', { cause });
       });
       if (signal.aborted) { landmarker.close(); return; }

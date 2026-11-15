@@ -19,9 +19,55 @@ function oppositeSide(points) {
 const fixtures = [
   ...EXERCISES.map((exercise) => ({ exercise, name: exercise, expectedSide: 'left' })),
   { exercise: 'push-up', name: 'mirrored floor push-up', adjust: oppositeSide, expectedSide: 'right' },
+  {
+    exercise: 'push-up', name: 'soft-elbow personal top position', expectedSide: 'left',
+    adjust(points) { for (const index of [13, 14]) points[index].x -= 18 / WIDTH; },
+  },
+  {
+    exercise: 'push-up', name: 'forward hand placement', expectedSide: 'left',
+    adjust(points) {
+      for (const index of [15, 16]) points[index].x += 90 / WIDTH;
+      for (const index of [13, 14]) points[index].x += 30 / WIDTH;
+    },
+  },
+  {
+    exercise: 'push-up', name: 'modestly raised hips', expectedSide: 'left',
+    adjust(points) { for (const index of [23, 24]) points[index].y -= 45 / HEIGHT; },
+  },
+  {
+    exercise: 'push-up', name: 'broader oblique start remains trackable', expectedSide: 'left',
+    adjust(points) {
+      points[12].x = points[11].x + 90 / WIDTH;
+      points[24].x = points[23].x + 66 / WIDTH;
+    },
+  },
+  {
+    exercise: 'push-up', name: 'camera roll at the personal top', expectedSide: 'left',
+    adjust(points) {
+      const radians = -10 * Math.PI / 180;
+      for (const point of points) {
+        const x = point.x * WIDTH - WIDTH / 2, y = point.y * HEIGHT - HEIGHT / 2;
+        point.x = (WIDTH / 2 + x * Math.cos(radians) - y * Math.sin(radians)) / WIDTH;
+        point.y = (HEIGHT / 2 + x * Math.sin(radians) + y * Math.cos(radians)) / HEIGHT;
+      }
+    },
+  },
   { exercise: 'knee-raise', name: 'opposite profile', adjust: oppositeSide, expectedSide: 'right' },
   { exercise: 'heel-raise', name: 'brief pose loss', loss: [4800, 4940], expectedSide: 'left' },
   { exercise: 'push-up', name: 'sustained pose loss', loss: [4800, 5400], expectedDiscard: 'tracking-gap' },
+  {
+    exercise: 'knee-raise', name: 'brief low-presence joint', expectedSide: 'left',
+    adjust(points, time) { if (time >= 4800 && time < 4940) points[25].presence = 0.1; },
+  },
+  {
+    exercise: 'push-up', name: 'brief displaced elbow with confident landmarks', expectedSide: 'left',
+    adjust(points, time) { if (time >= 4800 && time < 4940) points[13].x -= 150 / WIDTH; },
+  },
+  ...EXERCISES.map((exercise) => ({
+    exercise, name: `${exercise} with oblique projection and comfortable range`, expectedSide: 'left',
+    progress: (elapsed) => exampleProgress(elapsed) * 0.65,
+    adjust(points) { for (const point of points) point.x = 0.5 + (point.x - 0.5) * 0.82; },
+  })),
   { exercise: 'knee-raise', name: 'partial return', progress: (elapsed) => elapsed > 2400 ? Math.max(0.4, exampleProgress(elapsed)) : exampleProgress(elapsed) },
   {
     exercise: 'push-up', name: 'slow setup drift', expectedSide: 'left', minimumReadyAt: 2000,

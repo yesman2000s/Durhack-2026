@@ -166,6 +166,66 @@ test('push-up accepts mirrored camera side, arm/foot model jitter and an obscure
   assert.ok(!events.some(({ type }) => type === 'rep-discarded'));
 });
 
+test('push-up calibrates and completes from varied personal top positions', () => {
+  const variants = [
+    ['soft elbows', (points) => { for (const index of [13, 14]) points[index].x -= 28 / WIDTH; }],
+    ['hands further forward', (points) => {
+      for (const index of [15, 16]) points[index].x += 90 / WIDTH;
+      for (const index of [13, 14]) points[index].x += 45 / WIDTH;
+    }],
+    ['slightly raised hips', (points) => { for (const index of [23, 24]) points[index].y -= 45 / HEIGHT; }],
+    ['oblique view with a visible near arm', (points) => {
+      points[12].x = points[11].x + 95 / WIDTH;
+      points[24].x = points[23].x + 70 / WIDTH;
+    }],
+    ...[-10, 10].map((degrees) => [`camera rolled ${degrees} degrees`, (points) => {
+      const radians = degrees * Math.PI / 180;
+      for (const point of points) {
+        const x = point.x * WIDTH - WIDTH / 2, y = point.y * HEIGHT - HEIGHT / 2;
+        point.x = (WIDTH / 2 + x * Math.cos(radians) - y * Math.sin(radians)) / WIDTH;
+        point.y = (HEIGHT / 2 + x * Math.sin(radians) + y * Math.cos(radians)) / HEIGHT;
+      }
+    }]),
+  ];
+  for (const [name, adjust] of variants) {
+    for (const mirrored of [false, true]) {
+      const label = `${name}${mirrored ? ', mirrored' : ''}`;
+      const { frames, events } = run('push-up', { adjust(points) {
+        adjust(points);
+        if (mirrored) for (const point of points) point.x = 1 - point.x;
+      } });
+      assert.equal(frames.find(({ setup }) => setup.ready)?.time, 1040, label);
+      const completed = events.filter(({ type }) => type === 'rep-complete');
+      assert.equal(completed.length, 1, label);
+      assert.equal(completed[0].rep.frames.length, 5, label);
+      assert.ok(!events.some(({ type }) => type === 'rep-discarded'), label);
+    }
+  }
+});
+
+test('the broader push-up setup still rejects a held bottom, seated posture and deep pike', () => {
+  for (const [name, makePose] of [
+    ['bottom of a push-up', () => landmarksFor('push-up', 1)],
+    ['seated with arms extended', () => {
+      const points = landmarksFor('knee-raise', 0);
+      for (const index of [25, 26, 27, 28, 29, 30, 31, 32]) points[index].x += 90 / WIDTH;
+      return points;
+    }],
+    ['deep pike', () => {
+      const points = landmarksFor('push-up', 0);
+      for (const index of [23, 24]) points[index].y -= 120 / HEIGHT;
+      return points;
+    }],
+  ]) {
+    const tracker = new MobilityTracker('push-up');
+    for (let time = 0; time <= 2000; time += 80) {
+      const state = tracker.update({ landmarks: makePose(), timestampMs: time, width: WIDTH, height: HEIGHT });
+      assert.equal(state.setup.ready, false, name);
+      assert.equal(state.events.length, 0, name);
+    }
+  }
+});
+
 test('freestanding raises work with hidden arms; visible heel raises require both feet', () => {
   for (const exercise of ['knee-raise', 'heel-raise']) {
     const { events } = run(exercise, { adjust(landmarks) {
@@ -203,5 +263,74 @@ test('a sustained hand or support-foot relocation invalidates an active rep', ()
     } });
     assert.ok(events.some(({ type, reason }) => type === 'rep-discarded' && reason === 'foot-moved'), `${exercise} ${moved}`);
     assert.ok(!events.some(({ type }) => type === 'rep-complete'), `${exercise} ${moved}`);
+  }
+});
+
+test('requires landmark presence as well as visibility and rejects nonfinite confidence', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    for (const estimates of [{ presence: 0.1 }, { presence: NaN }, { visibility: Infinity }]) {
+      const { frames, events } = run(exercise, { adjust(landmarks) {
+        for (const index of [25, 26]) Object.assign(landmarks[index], estimates);
+      } });
+      assert.ok(frames.every(({ setup }) => !setup.ready), `${exercise} ${Object.keys(estimates)}`);
+      assert.equal(events.length, 0);
+    }
+    const missingAt = 2240;
+    const { events } = run(exercise, { adjust(landmarks, time) {
+      if (time === missingAt) landmarks[25].presence = 0.1;
+    } });
+    const rep = events.find(({ type }) => type === 'rep-complete')?.rep;
+    assert.ok(rep, exercise);
+    assert.ok(rep.metrics.validFrameFraction < 1, exercise);
+    assert.ok(!events.some(({ type, timestampMs }) => type === 'capture-candidate' && timestampMs === missingAt));
+  }
+});
+
+test('ignores a displaced limb segment even when total leg length and confidence still look valid', () => {
+  for (const [exercise, adjust] of [
+    ['knee-raise', (points) => {
+      // Moving a knee along the hip-to-ankle line preserves overall leg length.
+      points[25].x = points[23].x * 0.78 + points[27].x * 0.22;
+      points[25].y = points[23].y * 0.78 + points[27].y * 0.22;
+    }],
+    ['push-up', (points) => { points[13].x -= 150 / WIDTH; }],
+  ]) {
+    const badTime = 2240;
+    const { frames, events } = run(exercise, { adjust(landmarks, time) {
+      if (time === badTime) adjust(landmarks);
+    } });
+    assert.equal(frames.find(({ time }) => time === badTime).live, null, exercise);
+    assert.ok(!events.some(({ type, timestampMs }) => type === 'capture-candidate' && timestampMs === badTime));
+    const rep = events.find(({ type }) => type === 'rep-complete')?.rep;
+    assert.ok(rep, exercise);
+    assert.ok(rep.metrics.validFrameFraction < 1);
+    assert.ok(rep.frames.every(({ timestampMs }) => timestampMs !== badTime));
+  }
+});
+
+test('invalid camera dimensions do not advance the frame clock or corrupt setup', () => {
+  const tracker = new MobilityTracker('heel-raise');
+  const frame = { landmarks: landmarksFor('heel-raise', 0), timestampMs: 0, width: WIDTH, height: HEIGHT };
+  assert.equal(tracker.update({ ...frame, width: Infinity }).setup.ready, false);
+  assert.equal(tracker.lastAt, null);
+  for (let timestampMs = 0; timestampMs <= 1040; timestampMs += 80) tracker.update({ ...frame, timestampMs });
+  assert.equal(tracker.phase, 'ready');
+});
+
+test('keeps comfortable reps through oblique projection and naturally changing limb lengths', () => {
+  for (const exercise of ['push-up', 'knee-raise', 'heel-raise']) {
+    const { events } = run(exercise, { amplitude: 0.65, adjust(landmarks, time) {
+      // Horizontal foreshortening approximates a camera away from perfect profile.
+      for (const point of landmarks) point.x = 0.5 + (point.x - 0.5) * 0.82;
+      for (const index of [12, 24]) landmarks[index].x = landmarks[index - 1].x - 34 / WIDTH;
+      if (exercise === 'knee-raise') {
+        // Allow the raised thigh's projection to shorten as it turns in depth.
+        const projection = 1 - 0.28 * cosine((time - 1440) / 1200);
+        landmarks[25].x = landmarks[23].x + (landmarks[25].x - landmarks[23].x) * projection;
+        landmarks[25].y = landmarks[23].y + (landmarks[25].y - landmarks[23].y) * projection;
+      }
+    } });
+    assert.ok(events.some(({ type }) => type === 'rep-complete'), exercise);
+    assert.ok(!events.some(({ type }) => type === 'rep-discarded'), exercise);
   }
 });
