@@ -451,7 +451,7 @@ function App() {
       setLevelOutcome(data.attempt);
       setLevelPhase('complete');
       setError(context.sourceError || '');
-      getCoach().speak(data.attempt.passed ? 'Level complete! Your new note is ready. Great work.' : 'Set saved. Every practice counts. Take a breather.');
+      getCoach().speak(data.attempt.passed ? 'A new personal best! Your new note is ready.' : data.attempt.personalBest ? 'A new personal best! Your score is saved.' : 'Your workout is saved.');
     } catch (err) {
       if (levelAttempt.current === context) { setError(err.message); setLevelPhase('review-error'); }
     } finally { context.finishing = false; }
@@ -1243,7 +1243,7 @@ function App() {
           <header className="app-header">
             <div className="studio-heading">
               <a className="camera-wordmark" href="/" aria-label="Compose home"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 14h4l3-8 4 13 3-8 2 3h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span><strong>COMPOSE</strong></a>
-              <div className="camera-heading-copy"><span className="camera-eyebrow">MAKE YOUR NEXT NOTE</span><h1 id="studio-title">{selectedExercise.title} <span className="level-title">Level {levelAttempt.current?.level ?? selectedLevel.level ?? REQUESTED_LEVEL ?? 1}</span></h1></div>
+              <div className="camera-heading-copy"><span className="camera-eyebrow">MAKE YOUR NEXT NOTE</span><h1 id="studio-title">{selectedExercise.title} <span className="level-title">{visibleTarget?.practice ? 'Practice' : `Level ${levelAttempt.current?.level ?? selectedLevel.level ?? REQUESTED_LEVEL ?? 1}`}</span></h1></div>
             </div>
             <div className="studio-tools">
               <a className="button button-studio-link home-link" href="/"><Icon name="back" />Back to music</a>
@@ -1267,7 +1267,7 @@ function App() {
               <div className="workout-count" aria-label={`${workoutView?.repCount ?? 0} reps captured, target ${visibleTarget?.reps ?? 1}`}>
                 <span className="workout-note" aria-hidden="true">♪</span>
                 <strong key={workoutView?.repCount ?? 0}>{workoutView?.repCount ?? 0}<span> / {visibleTarget?.reps ?? 1}</span></strong>
-                <small>{mode === 'demo' ? 'Practice' : `Level ${levelAttempt.current?.level ?? 1}`}</small>
+                <small>{mode === 'demo' || visibleTarget?.practice ? 'Practice' : `Level ${levelAttempt.current?.level ?? 1}`}</small>
               </div>
               <div className="workout-hud-actions">
                 <button className="workout-icon-button" aria-label={voiceEnabled ? 'Mute coaching audio' : 'Enable coaching audio'} aria-pressed={!voiceEnabled} onClick={() => {
@@ -1289,8 +1289,8 @@ function App() {
               <div className="level-result-card">
                 {levelOutcome?.passed && <div className="level-confetti" aria-hidden="true">{Array.from({ length: 16 }, (_, index) => <i key={index} style={{ '--i': index, '--x': `${(index % 8) * 14 - 49}%` }} />)}</div>}
                 <div className="level-result-icon" data-passed={levelOutcome?.passed}>{levelOutcome?.passed ? '♪' : reviewBusy ? '…' : '✓'}</div>
-                <h2 id="workout-result-title">{reviewBusy ? levelPhase === 'saving' ? 'Saving your set' : 'A little feedback, then your music' : levelPhase === 'review-error' ? 'Your reps are safe here' : levelOutcome?.passed ? `Level ${levelOutcome.level} complete!` : levelOutcome?.source === 'simulated' ? 'Practice set complete' : 'Your set is saved'}</h2>
-                <p id="workout-result-description" role="status" aria-live="polite">{reviewBusy ? `${completedReviews} of ${workoutView?.repCount ?? 0} reps reviewed. Your level is checked once every review is ready.` : levelPhase === 'review-error' ? 'A review or connection needs another try. Your level has not unlocked yet.' : levelAttempt.current?.sourceError || (levelOutcome?.passed ? 'You earned a new note. Head back and hear your song grow.' : levelOutcome?.source === 'simulated' ? 'Examples help you practise. Use your camera or a video to unlock a level.' : levelOutcome?.repCount ? `Keep building from here. ${describeTarget(selectedLevel.target)}` : 'No complete rep was found. Reposition your camera and try a comfortable movement.')}</p>
+                <h2 id="workout-result-title">{reviewBusy ? levelPhase === 'saving' ? 'Saving your set' : 'A little feedback, then your music' : levelPhase === 'review-error' ? 'Your reps are safe here' : levelOutcome?.personalBest ? 'New personal best!' : levelOutcome?.source === 'simulated' ? 'Practice set complete' : 'Your set is saved'}</h2>
+                <p id="workout-result-description" role="status" aria-live="polite">{reviewBusy ? `${completedReviews} of ${workoutView?.repCount ?? 0} reps reviewed. Your score is checked once every review is ready.` : levelPhase === 'review-error' ? 'A review or connection needs another try.' : levelAttempt.current?.sourceError || (levelOutcome?.passed ? 'You earned a new note. Head back and hear your song grow.' : levelOutcome?.personalBest ? 'Your best form score is saved.' : levelOutcome?.source === 'simulated' ? 'Examples help you practise. Use your camera or a video to unlock a level.' : levelOutcome?.repCount ? describeTarget(selectedLevel.target) : 'No complete rep was found. Reposition your camera and try a comfortable movement.')}</p>
                 {levelOutcome?.score != null && <div className="level-score"><strong>{levelOutcome.score}<small>/100 form</small></strong><span>{levelOutcome.repCount} {levelOutcome.repCount === 1 ? 'rep' : 'reps'} reviewed</span></div>}
                 {levelPhase === 'review-error' && <div className="level-result-actions">
                   <button className="button button-primary" onClick={retryLevelReviews}>Retry and finish</button>

@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, rmdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createAccountStore } from '../server/accounts-store.js';
 import { createAccountService } from '../server/accounts.js';
 import { formScoringRoute } from '../server/form-scoring.js';
@@ -22,9 +23,9 @@ async function request(route, path, { method = 'GET', body = {}, cookie, origin 
   await route(req, res, () => { res.next = true; });
   return res;
 }
-async function harness(t, filename = ':memory:') {
+async function harness(t, filename = ':memory:', mongoWorkouts) {
   const store = createAccountStore({ filename });
-  const service = createAccountService({ store });
+  const service = createAccountService({ store, mongoWorkouts });
   t.after(() => store.close());
   const route = service.middleware;
   const registration = await request(route, '/api/auth/register', { method: 'POST', body: credentials });
@@ -85,7 +86,9 @@ test('only server coaching scores unlock levels; baseline is the first scored re
   const track = finished.body.progress.tracks[0];
   assert.equal(track.baseline, 70);
   assert.equal(track.completedLevels, 1);
-  assert.deepEqual(track.target, { level: 2, reps: 3, minScore: 67, scoreToBeat: 83 });
+  assert.deepEqual(track.target, { level: 2, reps: 1, scoreToBeat: 80 });
+  assert.equal(track.bestScore, 80);
+  assert.equal(track.personalBests, 1);
   assert.equal(finished.body.progress.tracks[1].completedLevels, 0);
   const forged = await h.start({ exerciseId: 'knee-raise' });
   assert.equal((await h.finish(forged, { score: 100, repCount: 999, passed: true })).body.attempt.passed, false);
@@ -106,14 +109,15 @@ test('rep retries and attempt finalization are idempotent and cannot credit a se
   assert.equal((await h.finish(second)).body.attempt.passed, false);
 });
 
-test('two concurrent attempts at the same level cannot skip the next gate', async (t) => {
+test('two concurrent personal bests unlock consecutive notes', async (t) => {
   const h = await harness(t);
   const first = await h.start(); const second = await h.start();
   await h.review(first, 'parallel-one', 80); await h.review(second, 'parallel-two', 100);
   assert.equal((await h.finish(first)).body.attempt.passed, true);
   const finished = await h.finish(second);
-  assert.equal(finished.body.attempt.passed, false);
-  assert.equal(finished.body.progress.tracks[0].completedLevels, 1);
+  assert.equal(finished.body.attempt.level, 2);
+  assert.equal(finished.body.progress.tracks[0].completedLevels, 2);
+  assert.equal(finished.body.progress.tracks[0].personalBests, 2);
 });
 
 test('ownership, exercise and source are checked before paid model calls', async (t) => {
@@ -162,19 +166,64 @@ test('null scores, simulated examples, cancellation and errors retain history wi
   assert.equal((await h.call('/api/attempts')).body.attempts.length, 4);
 });
 
-test('subsequent levels require improvement and offer extra reps even at score 100', async (t) => {
+test('only a strict personal best unlocks a note, even with extra reps or a score of 100', async (t) => {
   const h = await harness(t);
   const first = await h.start();
   await h.review(first, 'ceiling-baseline', 100);
   const firstResult = await h.finish(first);
-  assert.equal(firstResult.body.progress.tracks[0].target.scoreToBeat, null);
+  assert.equal(firstResult.body.progress.tracks[0].target.scoreToBeat, 100);
   const noImprovement = await h.start({ level: 2 });
   await h.review(noImprovement, 'same-score', 100);
   assert.equal((await h.finish(noImprovement)).body.attempt.passed, false);
   const more = await h.start({ level: 2 });
   await h.review(more, 'more-one', 97); await h.review(more, 'more-two', 97);
-  assert.equal((await h.finish(more)).body.attempt.passed, true);
+  assert.equal((await h.finish(more)).body.attempt.passed, false);
   assert.equal((await h.call('/api/attempts', { method: 'POST', body: { exerciseId: 'squat', level: 5, source: 'webcam', mode: 'set' } })).statusCode, 409);
+});
+
+test('a MongoDB sync retry preserves every score and credits only personal bests', async (t) => {
+  const saved = new Map();
+  let fail = true;
+  const h = await harness(t, ':memory:', {
+    async sync(userId, readWorkouts) {
+      const after = [...saved.values()].at(-1)?.sequence ?? 0;
+      for (const row of readWorkouts(userId, after, 200)) saved.set(row.attemptId, row);
+      if (fail) throw new Error('lost response after writing');
+    },
+  });
+  let level = 1;
+  const scores = [60, 68, 65, 68, 71];
+  for (const [index, score] of scores.entries()) {
+    const attempt = await h.start({ level });
+    await h.review(attempt, `progress-${index}`, score);
+    if (index === 0) {
+      assert.equal((await h.finish(attempt)).statusCode, 503);
+      fail = false;
+    }
+    const finished = await h.finish(attempt);
+    assert.equal(finished.statusCode, 200);
+    if (finished.body.attempt.passed) level++;
+    assert.deepEqual((await h.finish(attempt)).body, finished.body);
+  }
+  const progress = (await h.call('/api/progress')).body;
+  assert.equal(progress.tracks[0].personalBests, 3);
+  assert.equal(progress.tracks[0].bestScore, 71);
+  assert.equal(progress.tracks[0].completedLevels, 3);
+  assert.equal(progress.tracks[1].personalBests, 0);
+  assert.deepEqual([...saved.values()].map(({ score, personalBest }) => [score, personalBest]),
+    [[60, true], [68, true], [65, false], [68, false], [71, true]]);
+});
+
+test('personal bests keep counting after the final note', async (t) => {
+  const h = await harness(t);
+  for (let count = 1; count <= 8; count++) {
+    const attempt = await h.start({ level: Math.min(count, 7) });
+    await h.review(attempt, `full-track-${count}`, 70 + count);
+    const finished = await h.finish(attempt);
+    assert.equal(finished.body.attempt.passed, count <= 7);
+    assert.equal(finished.body.attempt.personalBest, true);
+    assert.equal(finished.body.progress.tracks[0].personalBests, count);
+  }
 });
 
 test('pending reviews block finalization and failed review details are preserved', async (t) => {
@@ -252,6 +301,38 @@ test('SQLite persists accounts, session hashes, feedback, progression and settin
     assert.deepEqual((await store.login(credentials)).user, user);
   } finally {
     store.close();
+    for (const suffix of ['', '-wal', '-shm']) rmSync(`${filename}${suffix}`, { force: true });
+    rmdirSync(directory);
+  }
+});
+
+test('existing workout scores backfill in finish order without removing earned notes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'compose-backfill-'));
+  const filename = join(directory, 'accounts.sqlite');
+  let store = createAccountStore({ filename, now: () => 1000 });
+  try {
+    const { user } = await store.register(credentials);
+    for (const [index, score] of [50, 70, 65, 75].entries()) {
+      const attempt = store.createAttempt(user.id, { exerciseId: 'squat', level: Math.min(index + 1, 3), source: 'webcam', mode: 'set' });
+      const input = { attemptId: attempt.id, id: attempt.id, exercise: 'squat', source: 'webcam' };
+      store.reserveRep(user.id, input);
+      store.recordRep(user.id, input, { score, summary: 'Test review', tips: [] });
+      store.finishAttempt(user.id, attempt.id);
+    }
+    store.close();
+    store = null;
+    const oldDb = new DatabaseSync(filename);
+    try { oldDb.exec('DROP TABLE scored_workouts'); }
+    finally { oldDb.close(); }
+
+    store = createAccountStore({ filename });
+    const rows = store.scoredWorkouts(user.id, 0, 10);
+    assert.deepEqual(rows.map(({ score, personalBest }) => [score, personalBest]),
+      [[50, true], [70, true], [65, false], [75, true]]);
+    assert.equal(store.progress(user.id).tracks[0].completedLevels, 3);
+    assert.equal(store.progress(user.id).tracks[0].personalBests, 3);
+  } finally {
+    store?.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${filename}${suffix}`, { force: true });
     rmdirSync(directory);
   }

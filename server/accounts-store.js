@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'no
 import { promisify } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { EXERCISE_TRACKS, LEVEL_COUNT, evaluateProgression, progressionTarget } from '../src/level-progression.js';
+import { EXERCISE_TRACKS, LEVEL_COUNT, isPersonalBest, isScoredWorkout, progressionTarget } from '../src/level-progression.js';
 import { songs } from '../src/music/songs.js';
 import { HttpError } from './json-route.js';
 
@@ -31,6 +31,7 @@ function attemptValue(row) {
   return {
     id: row.id, exerciseId: row.exercise_id, variant: row.variant, level: row.level, source: row.source, mode: row.mode,
     status: row.status, score: row.score, repCount: row.rep_count, passed: Boolean(row.passed),
+    personalBest: Boolean(row.personal_best),
     createdAt: row.created_at, endedAt: row.ended_at, reason: row.reason,
     feedback: row.feedback ? JSON.parse(row.feedback) : null,
   };
@@ -57,6 +58,11 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
       created_at TEXT NOT NULL, ended_at TEXT, reason TEXT, feedback TEXT
     );
     CREATE INDEX IF NOT EXISTS attempts_user ON attempts(user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS scored_workouts (
+      sequence INTEGER PRIMARY KEY, attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id),
+      user_id TEXT NOT NULL REFERENCES users(id), personal_best INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scored_workouts_user ON scored_workouts(user_id, sequence);
     CREATE TABLE IF NOT EXISTS rep_scores (
       user_id TEXT NOT NULL REFERENCES users(id), rep_id TEXT NOT NULL,
       attempt_id TEXT NOT NULL REFERENCES attempts(id), status TEXT NOT NULL, score REAL,
@@ -79,6 +85,26 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
       db.exec(`ALTER TABLE ${table} ADD COLUMN variant TEXT NOT NULL DEFAULT 'bodyweight'`);
     }
   }
+  // Seed the MongoDB sync queue and personal-best history for existing accounts.
+  // Previously unlocked notes remain in level_progress.
+  db.exec(`
+    INSERT INTO scored_workouts (attempt_id, user_id, personal_best)
+    SELECT id, user_id, eligible AND (previous_best IS NULL OR score > previous_best)
+    FROM (
+      SELECT *, MAX(CASE WHEN eligible THEN score END) OVER (
+        PARTITION BY user_id, exercise_id ORDER BY ended_at, rowid
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ) AS previous_best
+      FROM (
+        SELECT a.rowid, a.*, a.status = 'completed' AND (l.variant IS NULL OR l.variant = a.variant) AS eligible
+        FROM attempts a LEFT JOIN level_progress l
+          ON a.user_id = l.user_id AND a.exercise_id = l.exercise_id AND l.level = 1
+        WHERE a.score BETWEEN 0 AND 100 AND a.source IN ('webcam', 'video') AND a.ended_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM scored_workouts)
+      )
+    )
+    ORDER BY ended_at, rowid
+  `);
   // A provider request cannot survive a server restart. Keep its evidence of
   // failure visible, and let the user finish or retry the saved attempt.
   db.prepare("UPDATE rep_scores SET status = 'error', error = ? WHERE status = 'pending'")
@@ -91,15 +117,25 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   function ownedAttempt(userId, id) {
-    const row = db.prepare('SELECT * FROM attempts WHERE id = ? AND user_id = ?').get(id, userId);
+    const row = db.prepare(`
+      SELECT a.*, s.personal_best FROM attempts a LEFT JOIN scored_workouts s ON s.attempt_id = a.id
+      WHERE a.id = ? AND a.user_id = ?
+    `).get(id, userId);
     if (!row) throw new HttpError(404, 'This workout attempt was not found.');
     return row;
   }
   function progress(userId) {
     const completed = db.prepare('SELECT * FROM level_progress WHERE user_id = ? ORDER BY level').all(userId);
+    const bests = db.prepare(`
+      SELECT a.exercise_id, MAX(a.score) AS best_score, COUNT(*) AS personal_bests
+      FROM scored_workouts s JOIN attempts a ON a.id = s.attempt_id
+      WHERE s.user_id = ? AND s.personal_best = 1 GROUP BY a.exercise_id
+    `).all(userId);
     const tracks = EXERCISE_TRACKS.map(({ id }) => {
       const rows = completed.filter((row) => row.exercise_id === id);
+      const best = bests.find((row) => row.exercise_id === id);
       const track = { exerciseId: id, variant: rows[0]?.variant ?? null, baseline: rows[0]?.baseline ?? null, completedLevels: rows.length,
+        bestScore: best?.best_score ?? null, personalBests: best?.personal_bests ?? 0,
         levels: Array.from({ length: LEVEL_COUNT }, (_, index) => {
           const level = index + 1;
           const row = rows.find((item) => item.level === level);
@@ -162,6 +198,16 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     },
     logout(token) { if (typeof token === 'string') db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token)); },
     progress,
+    scoredWorkouts(userId, after, limit) {
+      return db.prepare(`
+        SELECT s.sequence, a.id AS attemptId, a.user_id AS userId, a.exercise_id AS exerciseId,
+          a.score, a.rep_count AS repCount, a.source, a.variant, a.status, a.ended_at AS endedAt, s.personal_best AS personalBest
+        FROM scored_workouts s JOIN attempts a ON a.id = s.attempt_id
+        WHERE s.user_id = ? AND s.sequence > ? ORDER BY s.sequence LIMIT ?
+      `).all(userId, after, limit).map((row) => ({
+        ...row, personalBest: Boolean(row.personalBest), endedAt: new Date(row.endedAt),
+      }));
+    },
     saveSettings(userId, input) {
       if (!record(input) || Object.keys(input).some((key) => !['songId', 'positions', 'mutedNotes'].includes(key))) bad('Choose valid music settings.');
       const current = progress(userId);
@@ -193,7 +239,7 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
     createAttempt(userId, input) {
       if (!record(input) || !EXERCISE_TRACKS.some(({ id }) => id === input.exerciseId)) bad('Choose an available movement.');
       const track = progress(userId).tracks.find(({ exerciseId }) => exerciseId === input.exerciseId);
-      if (!Number.isInteger(input.level) || input.level !== track.target?.level) throw new HttpError(409, 'Choose your next available level.');
+      if (input.level !== (track.target?.level ?? LEVEL_COUNT)) throw new HttpError(409, 'Choose your next available level.');
       const variant = input.variant ?? 'bodyweight';
       if (!(input.exerciseId === 'squat' ? ['bodyweight', 'barbell'] : ['bodyweight']).includes(variant)) bad('Choose a supported movement variant.');
       if (track.variant && track.variant !== variant) throw new HttpError(409, `Your saved baseline uses ${track.variant}. Use the same variant for this level.`);
@@ -207,7 +253,10 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
       return attempt(userId, id);
     },
     listAttempts(userId) {
-      return db.prepare('SELECT * FROM attempts WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100')
+      return db.prepare(`
+        SELECT a.*, s.personal_best FROM attempts a LEFT JOIN scored_workouts s ON s.attempt_id = a.id
+        WHERE a.user_id = ? ORDER BY a.created_at DESC, a.rowid DESC LIMIT 100
+      `)
         .all(userId).map(attemptValue);
     },
     attempt,
@@ -256,20 +305,27 @@ export function createAccountStore({ filename = resolve(process.cwd(), '.data', 
         const scored = reps.filter((rep) => rep.status === 'scored' && rep.score !== null);
         const score = scored.length ? Math.round(scored.reduce((sum, rep) => sum + rep.score, 0) / scored.length * 100) / 100 : null;
         const track = progress(userId).tracks.find(({ exerciseId }) => exerciseId === row.exercise_id);
-        const result = evaluateProgression(track, { score, repCount: scored.length, source: row.source, level: row.level, baselineScore: scored[0]?.score });
-        const passed = reason === 'completed' && result.passed;
+        const scoredWorkout = isScoredWorkout(score, row.source);
+        const personalBest = reason === 'completed' && scoredWorkout &&
+          (!track.variant || row.variant === track.variant) && isPersonalBest(score, track.bestScore);
+        const unlockedLevel = personalBest ? track.target?.level : null;
+        const passed = unlockedLevel != null;
         const endedAt = iso();
         const lastFeedback = reps.filter((rep) => rep.feedback).at(-1)?.feedback ?? null;
-        db.prepare('UPDATE attempts SET status=?,score=?,rep_count=?,passed=?,ended_at=?,reason=?,feedback=? WHERE id=?')
-          .run(reason, score, scored.length, Number(passed), endedAt, reason, lastFeedback, id);
+        db.prepare('UPDATE attempts SET status=?,score=?,rep_count=?,passed=?,ended_at=?,reason=?,feedback=?,level=? WHERE id=?')
+          .run(reason, score, scored.length, Number(passed), endedAt, reason, lastFeedback, unlockedLevel ?? row.level, id);
+        if (scoredWorkout) {
+          db.prepare('INSERT INTO scored_workouts (attempt_id, user_id, personal_best) VALUES (?,?,?)')
+            .run(id, userId, Number(personalBest));
+        }
         if (passed) {
           db.prepare('INSERT INTO level_progress (user_id,exercise_id,level,score,rep_count,baseline,variant,attempt_id,completed_at) VALUES (?,?,?,?,?,?,?,?,?)')
-            .run(userId, row.exercise_id, row.level, score, scored.length, result.baseline, row.variant, id, endedAt);
+            .run(userId, row.exercise_id, unlockedLevel, score, scored.length, track.baseline ?? scored[0].score, row.variant, id, endedAt);
           const settings = progress(userId).settings;
-          const usedSlots = new Set(Array.from({ length: row.level - 1 }, (_, index) => settings.positions[`${row.exercise_id}:${index + 1}`] ?? index));
-          if (usedSlots.has(row.level - 1)) {
+          const usedSlots = new Set(Array.from({ length: unlockedLevel - 1 }, (_, index) => settings.positions[`${row.exercise_id}:${index + 1}`] ?? index));
+          if (usedSlots.has(unlockedLevel - 1)) {
             const freeSlot = Array.from({ length: LEVEL_COUNT }, (_, index) => index).find((slot) => !usedSlots.has(slot));
-            settings.positions[`${row.exercise_id}:${row.level}`] = freeSlot;
+            settings.positions[`${row.exercise_id}:${unlockedLevel}`] = freeSlot;
             db.prepare('INSERT INTO user_settings (user_id,value) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET value=excluded.value')
               .run(userId, JSON.stringify(settings));
           }

@@ -27,6 +27,7 @@ export function mergeAttemptReps(localReps = [], serverReps = []) {
 
 export function attemptOutcome(attempt) {
   if (attempt.passed) return { label: 'Unlocked', filter: 'unlocked' };
+  if (attempt.personalBest) return { label: 'Personal best', filter: 'practice' };
   if (attempt.status === 'active') return { label: 'In progress', filter: 'active' };
   if (attempt.status === 'error') return { label: 'Review incomplete', filter: 'error' };
   if (attempt.status === 'cancelled') return { label: 'Cancelled', filter: 'practice' };

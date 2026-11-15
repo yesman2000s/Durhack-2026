@@ -3,15 +3,17 @@ import { defineConfig, loadEnv } from 'vite';
 import { formScoringRoute } from './server/form-scoring.js';
 import { feedbackSpeechRoute } from './server/feedback-speech.js';
 import { createAccountService } from './server/accounts.js';
+import { createMongoWorkouts } from './server/mongo-workouts.js';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), ['GEMINI_', 'ELEVENLABS_']);
+  const env = loadEnv(mode, process.cwd(), ['GEMINI_', 'ELEVENLABS_', 'MONGODB_']);
   const speakFeedback = feedbackSpeechRoute({
     apiKey: env.ELEVENLABS_API_KEY,
     voiceId: env.ELEVENLABS_VOICE_ID || undefined,
   });
   const mountFeedbackRoutes = (server) => {
-    const accounts = createAccountService();
+    const mongoWorkouts = env.MONGODB_URI ? createMongoWorkouts(env.MONGODB_URI, env.MONGODB_DATABASE || undefined) : undefined;
+    const accounts = createAccountService({ mongoWorkouts });
     // Database files live beside the source tree and must never be served by
     // Vite's static or /@fs handlers, in either dev or preview mode.
     server.middlewares.use((req, res, next) => {
@@ -28,7 +30,10 @@ export default defineConfig(({ mode }) => {
       scoreRep: accounts.scoreRep,
     }));
     server.middlewares.use(speakFeedback);
-    server.httpServer?.once('close', () => accounts.store.close());
+    server.httpServer?.once('close', () => {
+      accounts.store.close();
+      void mongoWorkouts?.close();
+    });
   };
   return {
     plugins: [{

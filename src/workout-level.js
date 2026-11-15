@@ -1,14 +1,19 @@
+import { LEVEL_COUNT } from './level-progression.js';
+
 export function parseRequestedLevel(search) {
   const value = new URLSearchParams(search).get('level');
   if (value === null) return null;
   const level = Number(value);
-  return Number.isInteger(level) && level >= 1 && level <= 7 ? level : null;
+  return Number.isInteger(level) && level >= 1 && level <= LEVEL_COUNT ? level : null;
 }
 
 export function selectLevel(progress, exerciseId, requestedLevel = null) {
   const track = progress?.tracks?.find((entry) => entry.exerciseId === exerciseId);
   if (!track) return { error: 'Your exercise progress could not be loaded.' };
-  if (!track.target) return { track, error: 'All seven levels are complete. Your music is ready at home.' };
+  if (!track.target) return {
+    track, level: LEVEL_COUNT,
+    target: { level: LEVEL_COUNT, reps: 1, scoreToBeat: track.bestScore, practice: true },
+  };
   const level = requestedLevel ?? track.target.level;
   if (level !== track.target.level) {
     const status = track.levels?.find((entry) => entry.level === level)?.status;
@@ -21,9 +26,9 @@ export function selectLevel(progress, exerciseId, requestedLevel = null) {
 
 export function describeTarget(target) {
   if (!target) return 'Your next level is waiting.';
-  if (target.level === 1) return 'Complete a reviewed rep to set your personal starting point.';
-  const reps = `${target.reps} reps at ${target.minScore}+ form`;
-  return target.scoreToBeat == null ? reps : `${reps}, or reach ${target.scoreToBeat} form.`;
+  if (target.scoreToBeat == null) return 'Complete a reviewed workout to set your first personal best.';
+  if (target.scoreToBeat === 100) return 'You reached the top form score. You can still practise and save your workouts.';
+  return `Beat your personal best of ${target.scoreToBeat} / 100.`;
 }
 
 export async function workoutApi(path, options = {}, fetchImpl = globalThis.fetch) {

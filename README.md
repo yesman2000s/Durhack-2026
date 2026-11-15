@@ -36,14 +36,9 @@ To analyze a recording, choose the exercise, capture mode, and **Upload video**.
 
 Each movement has seven levels, and each level unlocks a 16-beat section of its instrument in a 112-beat excerpt. Squat adds drums, knee raise adds bass, push-ups add piano, and heel raises add guitar where those stems are available. All accounts start with zero unlocked notes. Levels progress independently for each movement.
 
-The server checks the following rules using only Gemini scores saved for that signed-in workout:
+The first completed webcam or uploaded-video workout with a numeric score sets that exercise's personal best and counts as the first unlock. Each workout that strictly beats the previous best adds one to the count and unlocks the next available note. For example, scores of 60, 68, 65, 68, and 71 leave a best score of 71 and a count of three. After all seven notes are unlocked, users can keep practising and recording personal bests.
 
-- Level 1 requires at least one scored webcam or uploaded-video rep. The first scored rep in that successful attempt establishes the movement's baseline, `B`. Its first score is the baseline even if the attempt contains several reps.
-- Later levels pass with **either** one more scored rep than the previous successful level while the new attempt's mean score is at least `max(0, B - 3)`, **or** a mean score at least three points higher than the previous successful level, with at least one scored rep.
-- Attempt scores are the mean of non-null rep scores, rounded to two decimal places. A null score does not count as a scored rep. If the better-form target would exceed 100, only the extra-reps path is offered.
-- Only the next available level can be earned, and subsequent attempts must use the baseline's exercise variant. Simulated examples, cancelled attempts, error results, and attempts without a scored rep never unlock notes. Pending or failed reviews must be resolved before a completed attempt can be finalized.
-
-For example, a baseline of 80 followed by a successful one-rep level at 80 makes the next target **two scored reps averaging at least 77**, or **at least one scored rep averaging 83 or more**. Failed attempts do not raise the next target. The scoring baseline is separate from the local pose/range reference used by the movement tracker.
+The workout score is the mean of its numeric Gemini rep scores, rounded to two decimal places. Each signed-in account has a separate score history per exercise. Simulated examples, cancelled workouts, and workouts saved with review errors do not earn personal bests. Squat progression uses the variant of the first unlocked workout. Existing unlocked notes are kept when updating from an earlier version.
 
 Choose a music genre, then **Play my mix** to hear the combined unlocked notes, or select a completed note to preview its original song section. The player stays visible while browsing music or previous attempts, with play/pause, a seek bar, elapsed time, previous/next track, repeat, and desktop volume controls. **Back to full mix** exits a note preview. Pausing and seeking preserve the exact playback position. Changing tracks starts the new track at the beginning and continues playing if playback was active. Repeat loops the unlocked arrangement; playback never awards progress.
 
@@ -66,6 +61,8 @@ All three recordings are licensed under [CC BY 4.0](https://creativecommons.org/
 In **My attempts**, filter by exercise or result to find previous practice. Each attempt shows every rep's summary, tips and review status. The latest server review takes precedence over older local feedback, while locally saved snapshots and recordings remain available alongside it.
 
 The Vite server creates `.data/compose.sqlite` on first use. SQLite stores accounts, hashed passwords, hashed session tokens, individual rep scores and written feedback, attempt history, completed levels, and music settings. This directory is ignored by Git and blocked from HTTP downloads. Progress belongs to the account in this database and survives browser reloads and server restarts. Stop the server before copying `.data/` to move or back up its saved accounts and workouts.
+
+Set the server-side `MONGODB_URI` in `.env.local` to save scored workout history to MongoDB. `MONGODB_DATABASE` defaults to `compose`. The `workout_scores` collection stores one document per scored webcam or uploaded-video workout, including ties and lower scores. Each document has the attempt ID as `_id`, the account and exercise IDs, variant, source, score, rep count, finish status and time, and a personal-best flag. SQLite remains the account and workflow store. The account service syncs the score history when a workout finishes or its owner opens progress, including history saved before MongoDB was configured. A failed sync can be retried with the same attempt ID.
 
 Sign-in uses a 30-day `HttpOnly`, `SameSite=Lax` session cookie, with `Secure` on HTTPS. Signing out revokes the session. Passwords use salted scrypt hashes, and credential attempts are rate limited. Registration is local to this application; no email verification or password-reset service is configured.
 
@@ -171,7 +168,7 @@ The CLI saves `ELEVENLABS_API_KEY` in the ignored `.env.local` file. The server 
 
 Speech never overlaps. If reviews arrive faster than they can be spoken, the next audio uses the newest feedback and older unsounded cues are skipped; all written reviews remain available. `POST /api/form-speech` accepts the `{score, summary, tips}` returned by `/api/form-score`, plus optional `repNumber`, and responds with `audio/mpeg`. The legacy `{score, tips}` payload remains supported. ElevenLabs receives only the narration text.
 
-Vite dev and preview mount the account, progression, form-scoring, and speech routes from the same origin. A static-only deployment of `dist/` is insufficient. A deployed Node server must mount `createAccountService().middleware`, pass its `scoreRep` hook to `formScoringRoute`, mount `feedbackSpeechRoute`, and retain the SQLite data directory. Before exposing the paid coaching routes publicly, add deployment-level authentication and rate limits for standalone practice and speech requests, which remain available without an attempt session.
+Vite dev and preview mount the account, progression, form-scoring, and speech routes from the same origin. A deployed Node server must mount the account service middleware, pass its `scoreRep` hook to `formScoringRoute`, mount `feedbackSpeechRoute`, and retain the SQLite data directory. For MongoDB score history, pass `mongoWorkouts: createMongoWorkouts(uri, database)` to `createAccountService` and close the MongoDB client on shutdown. Before exposing the paid coaching routes publicly, add deployment-level authentication and rate limits for standalone practice and speech requests, which remain available without an attempt session.
 
 ## Verify
 

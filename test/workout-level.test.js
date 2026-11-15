@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createSetRecording, describeTarget, parseRequestedLevel, selectLevel, workoutApi } from '../src/workout-level.js';
 
 const progress = { tracks: [{ exerciseId: 'squat', baseline: 70, completedLevels: 1,
-  target: { level: 2, reps: 2, minScore: 67, scoreToBeat: 73 },
+  target: { level: 2, reps: 1, scoreToBeat: 70.25 },
   levels: [{ level: 1, status: 'completed' }, { level: 2, status: 'available' }, { level: 3, status: 'locked' }] }] };
 
 test('level selection uses server availability and never advances a locked or completed request', () => {
@@ -12,13 +12,14 @@ test('level selection uses server availability and never advances a locked or co
   assert.match(selectLevel(progress, 'squat', 1).error, /already complete/);
   assert.match(selectLevel(progress, 'squat', 3).error, /Complete level 2/);
   assert.equal(selectLevel(progress, 'push-up').target, undefined);
-  assert.match(selectLevel({ tracks: [{ exerciseId: 'squat', target: null }] }, 'squat').error, /seven levels/);
+  const practice = selectLevel({ tracks: [{ exerciseId: 'squat', target: null, bestScore: 96 }] }, 'squat');
+  assert.deepEqual(practice.target, { level: 7, reps: 1, practice: true, scoreToBeat: 96 });
 });
 
 test('URL levels reject fractional, missing, and out-of-range values', () => {
   assert.equal(parseRequestedLevel('?exercise=squat&level=7'), 7);
   for (const search of ['', '?level=', '?level=8', '?level=0', '?level=1.5', '?level=oops']) assert.equal(parseRequestedLevel(search), null);
-  assert.match(describeTarget(progress.tracks[0].target), /2 reps at 67/);
+  assert.match(describeTarget(progress.tracks[0].target), /Beat your personal best of 70.25/);
 });
 
 test('API preserves server failures for retry and includes same-origin authentication', async () => {

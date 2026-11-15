@@ -9,26 +9,13 @@ export const EXERCISE_TRACKS = [
 export function progressionTarget(track) {
   const completed = track?.completedLevels ?? 0;
   if (completed >= LEVEL_COUNT) return null;
-  if (completed === 0) return { level: 1, reps: 1, minScore: 0, scoreToBeat: null };
-  const previous = track.levels.find((item) => item.level === completed);
-  const scoreToBeat = Math.round((previous.score + 3) * 100) / 100;
-  return {
-    level: completed + 1,
-    reps: previous.repCount + 1,
-    minScore: Math.max(0, track.baseline - 3),
-    scoreToBeat: scoreToBeat <= 100 ? scoreToBeat : null,
-  };
+  return { level: completed + 1, reps: 1, scoreToBeat: track?.bestScore ?? null };
 }
 
-// This is shared presentation/domain logic. Only server-recorded coaching
-// results are allowed to reach the durable progression write path.
-export function evaluateProgression(track, { score, repCount, source, level, baselineScore = score }) {
-  const target = progressionTarget(track);
-  const eligible = ['webcam', 'video'].includes(source) && Number.isFinite(score) && score >= 0 && score <= 100 &&
-    Number.isInteger(repCount) && repCount >= 1 && target?.level === level;
-  if (!eligible) return { passed: false, baseline: track?.baseline ?? null, path: null };
-  if (level === 1) return { passed: true, baseline: baselineScore, path: 'baseline' };
-  const moreReps = repCount >= target.reps && score >= target.minScore;
-  const betterForm = target.scoreToBeat !== null && score >= target.scoreToBeat;
-  return { passed: moreReps || betterForm, baseline: track.baseline, path: moreReps ? 'reps' : betterForm ? 'form' : null };
+export function isScoredWorkout(score, source) {
+  return (source === 'webcam' || source === 'video') && Number.isFinite(score) && score >= 0 && score <= 100;
+}
+
+export function isPersonalBest(score, bestScore) {
+  return bestScore == null || score > bestScore;
 }

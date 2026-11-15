@@ -28,8 +28,16 @@ async function readJson(req) {
   return input;
 }
 
-export function createAccountService({ store = createAccountStore(), now = () => Date.now() } = {}) {
+export function createAccountService({ store = createAccountStore(), mongoWorkouts, now = () => Date.now() } = {}) {
   const limits = new Map();
+  async function syncWorkouts(userId) {
+    if (!mongoWorkouts) return;
+    try {
+      await mongoWorkouts.sync(userId, store.scoredWorkouts);
+    } catch {
+      throw new HttpError(503, 'Workout scores could not sync to MongoDB. Try again shortly.');
+    }
+  }
   function requireUser(req) {
     const user = store.userForToken(sessionToken(req));
     if (!user) throw new HttpError(401, 'Sign in to save your workouts and unlock music.');
@@ -75,7 +83,11 @@ export function createAccountService({ store = createAccountStore(), now = () =>
         return send({ user: null });
       }
       const user = requireUser(req);
-      if (path === '/api/progress' && req.method === 'GET') return send(store.progress(user.id));
+      if (path === '/api/progress' && req.method === 'GET') {
+        const progress = store.progress(user.id);
+        await syncWorkouts(user.id);
+        return send(progress);
+      }
       if (path === '/api/settings' && ['POST', 'PATCH'].includes(req.method)) {
         return send({ settings: store.saveSettings(user.id, await readJson(req)) });
       }
@@ -85,7 +97,9 @@ export function createAccountService({ store = createAccountStore(), now = () =>
       if (match && !match[2] && req.method === 'GET') return send({ attempt: store.attempt(user.id, match[1]) });
       if (match?.[2] && req.method === 'POST') {
         const input = await readJson(req);
-        return send(store.finishAttempt(user.id, match[1], input.reason ?? 'completed'));
+        const result = store.finishAttempt(user.id, match[1], input.reason ?? 'completed');
+        await syncWorkouts(user.id);
+        return send(result);
       }
       return send({ error: 'This account endpoint or method is unavailable.' }, 405);
     } catch (error) {

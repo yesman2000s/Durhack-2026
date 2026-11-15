@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { EXERCISE_TRACKS, LEVEL_COUNT } from './level-progression.js';
+import { EXERCISE_TRACKS, LEVEL_COUNT, progressionTarget } from './level-progression.js';
+import { describeTarget } from './workout-level.js';
 import { songs } from './music/songs.js';
 import { partForTrack } from './music/timeline.js';
 import { visualSlots, moveClipPositions } from './music/arrangement.js';
@@ -21,9 +22,9 @@ const scoreLabel = (score) => Number.isFinite(score) ? Math.round(score) : '—'
 const soundLabel = (song, exerciseId) => ({ 'drums-low': 'Drums', 'drums-high': 'Percussion', other: 'Melody' }[partForTrack(song, exerciseId).stem] ?? partForTrack(song, exerciseId).name);
 
 function emptyTracks() {
-  return EXERCISE_TRACKS.map(({ id }) => ({ exerciseId: id, baseline: null, completedLevels: 0,
+  return EXERCISE_TRACKS.map(({ id }) => ({ exerciseId: id, baseline: null, completedLevels: 0, bestScore: null, personalBests: 0,
     levels: LEVELS.map((level) => ({ level, status: level === 1 ? 'available' : 'locked', score: null, repCount: 0 })),
-    target: { level: 1, reps: 1, minScore: 0, scoreToBeat: null } }));
+    target: progressionTarget() }));
 }
 
 async function api(path, options = {}) {
@@ -201,7 +202,7 @@ function StudioApp() {
   }
   function beginLevel(exerciseId, level) {
     if (!user) { pendingWorkout.current = { exerciseId }; setAuthOpen(true); return; }
-    stopMusic(); location.assign(`/camera.html?exercise=${exerciseId}&level=${level}`);
+    stopMusic(); location.assign(`/camera.html?exercise=${exerciseId}${level == null ? '' : `&level=${level}`}`);
   }
   function startLevel() { beginLevel(selected.exerciseId, selected.level); }
   function continueTraining() { if (nextTrack?.target) beginLevel(nextTrack.exerciseId, nextTrack.target.level); }
@@ -239,7 +240,7 @@ function StudioApp() {
         <section className={`journey-next tone-${TONES[nextTrack?.exerciseId ?? selected.exerciseId]}`} aria-label="Your next little win">
           <div className="journey-next-art"><InstrumentArt instrument={soundLabel(currentSong, nextTrack?.exerciseId ?? selected.exerciseId)} /><small>{nextTrack ? `NOTE ${String(nextTrack.target.level).padStart(2, '0')}` : 'COMPLETE'}</small></div>
           <div className="journey-next-copy"><span className="eyebrow">YOUR NEXT LITTLE WIN</span><h2>{!nextTrack ? 'A whole soundtrack. Made by you.' : nextTrack.target.level === 1 ? 'One rep. Your first note.' : 'Build on your best.'}</h2>
-            <p>{!nextTrack ? 'Every note is yours. Enjoy your mix or revisit your progress.' : nextTrack.target.level === 1 ? `Start with one rep of ${EXERCISE_TRACKS.find((track) => track.id === nextTrack.exerciseId).name.toLowerCase()}. Set your starting score and unlock your first sound.` : `Complete ${nextTrack.target.reps} reps at ${scoreLabel(nextTrack.target.minScore)}+ form${nextTrack.target.scoreToBeat !== null ? `, or earn ${scoreLabel(nextTrack.target.scoreToBeat)}+ on your form` : ''}. Your own progress is the goal.`}</p>
+            <p>{!nextTrack ? 'Every note is yours. Enjoy your mix or keep practising.' : describeTarget(nextTrack.target)}</p>
             {nextTrack?.baseline != null && <span className="journey-baseline">Your starting score <strong>{scoreLabel(nextTrack.baseline)}</strong></span>}
           </div><div className="journey-next-action"><button className="raised-button primary" disabled={!ready || (!nextTrack && !player.hasAudio)} onClick={nextTrack ? continueTraining : player.playMix}>{nextTrack ? 'Let’s move' : 'Play my mix'}<Icon name="arrow" size={18} /></button><small>{nextTrack ? 'Camera on. Distractions off.' : 'Your progress. Your soundtrack.'}</small></div>
         </section>
@@ -248,14 +249,16 @@ function StudioApp() {
           <div className="detail-heading"><span className="detail-icon"><Icon name={selectedLevel.status === 'completed' ? 'check' : selectedLevel.status === 'locked' ? 'lock' : 'note'} size={24} /></span><span className="detail-status">{selectedLevel.status === 'completed' ? 'Unlocked' : selectedLevel.status === 'locked' ? 'Locked' : 'Your next note'}</span></div>
           <h2>{selectedInstrument.name}</h2><p className="detail-subtitle">{selectedSound} <span>·</span> Note {String(selected.level).padStart(2, '0')}</p>
           <div className="note-goal">
-            {selectedLevel.status === 'completed' ? <><div className="earned-stats"><div><strong>{scoreLabel(selectedLevel.score)}</strong><span>form score</span></div><div><strong>{selectedLevel.repCount}</strong><span>{selectedLevel.repCount === 1 ? 'rep' : 'reps'}</span></div></div><p>{selectedMuted ? 'This note is muted. Include it in your mix to hear it again.' : 'This note is part of your mix.'}</p></> : selectedLevel.status === 'locked' ? <p>Unlock note {selectedTrack.completedLevels + 1} in this track first.</p> : selected.level === 1 ? <><h3>Start with 1 rep</h3><p>Your first reviewed rep sets your starting score and unlocks this sound.</p></> : <><h3>Improve to unlock</h3><div className="goal-option"><strong>{target?.reps} reps</strong><span>at {scoreLabel(target?.minScore)}+ form</span></div>{target?.scoreToBeat != null && <><span className="goal-or">or</span><div className="goal-option"><strong>{target.scoreToBeat}+ form</strong><span>in at least 1 rep</span></div></>}</>}
+            {selectedLevel.status === 'completed' ? <><div className="earned-stats"><div><strong>{scoreLabel(selectedLevel.score)}</strong><span>form score</span></div><div><strong>{selectedLevel.repCount}</strong><span>{selectedLevel.repCount === 1 ? 'rep' : 'reps'}</span></div></div><p>{selectedMuted ? 'This note is muted. Include it in your mix to hear it again.' : 'This note is part of your mix.'}</p></> : selectedLevel.status === 'locked' ? <p>Unlock note {selectedTrack.completedLevels + 1} in this track first.</p> : <p>{describeTarget(target)}</p>}
           </div>
           <div className="note-actions">{selectedLevel.status === 'completed' ? <>
             <button className="raised-button primary" disabled={selectedMuted || audioState === 'loading'} onClick={() => previewKey === selectedKey ? player.toggle() : player.playNote(selected)}><Icon name={previewingSelected ? 'pause' : 'play'} size={17} />{previewingSelected ? 'Pause note' : 'Play note'}</button>
             <button className="mute-control" role="switch" aria-checked={!selectedMuted} aria-label="Include selected note in mix" disabled={saving} onClick={() => saveSettings({ mutedNotes: selectedMuted ? settings.mutedNotes.filter((key) => key !== selectedKey) : [...settings.mutedNotes, selectedKey] })}><span>Include in mix</span><span className="switch-track"><span /></span></button>
             <div className="move-controls"><span>Move clip</span><button aria-label="Move selected note left" disabled={saving || selectedSlot === 0} onClick={() => moveNote(selected.exerciseId, selected.level, selectedSlot - 1)}>←</button><button aria-label="Move selected note right" disabled={saving || selectedSlot === LEVEL_COUNT - 1} onClick={() => moveNote(selected.exerciseId, selected.level, selectedSlot + 1)}>→</button></div><p className="detail-hint">Moving clips keeps the music in order.</p>
           </> : selectedLevel.status === 'locked' ? <button className="raised-button" onClick={() => selectNote(selected.exerciseId, selectedTrack.completedLevels + 1)}>Go to note {selectedTrack.completedLevels + 1}<Icon name="arrow" size={16} /></button> : <><button className="raised-button primary" disabled={!ready} onClick={startLevel}>Start exercise <Icon name="arrow" size={17} /></button><p className="detail-hint">{user ? 'Choose one rep or a full set.' : 'Sign in to save your progress.'}</p></>}</div>
-          {selectedTrack.baseline !== null && <div className="baseline-line"><span>Your starting score</span><strong>{scoreLabel(selectedTrack.baseline)}</strong></div>}
+          <div className="baseline-line"><span>Personal bests</span><strong>{selectedTrack.personalBests}</strong></div>
+          {selectedTrack.bestScore != null && <div className="baseline-line"><span>Best form score</span><strong>{selectedTrack.bestScore} / 100</strong></div>}
+          {user && !target && <button className="raised-button" onClick={() => beginLevel(selected.exerciseId)}>Keep practising</button>}
         </NoteDetail>
       </div> : <HistoryPanel user={user} attempts={attempts} onSignIn={() => setAuthOpen(true)} onBackToMusic={() => setTab('studio')} onViewAttempt={setViewAttempt} />}
     </main>
