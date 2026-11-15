@@ -40,7 +40,7 @@ function geminiResponse(value = feedback, extra = {}) {
   ] }, ...extra }] });
 }
 
-async function callRoute(route, body, { raw, method = 'POST' } = {}) {
+async function callRoute(route, body, { raw, method = 'POST', onResponse = () => {} } = {}) {
   const req = Readable.from([Buffer.from(raw ?? JSON.stringify(body))]);
   req.method = method;
   req.url = '/api/form-score';
@@ -50,6 +50,7 @@ async function callRoute(route, body, { raw, method = 'POST' } = {}) {
   res.headers = {};
   res.setHeader = (key, value) => { res.headers[key.toLowerCase()] = value; };
   res.end = (value) => { res.body = value; };
+  onResponse(res);
   await route(req, res, () => { res.next = true; });
   return res;
 }
@@ -145,32 +146,104 @@ test('feedback normalization supports old responses and validates concise summar
   assert.equal(normalizeFeedback({ ...feedback, summary: 'x'.repeat(181) }), null);
 });
 
-test('ElevenLabs reads the rep summary and actionable tips without a score announcement', async () => {
+function callSpeechRoute(route, body, options) {
+  return callRoute((req, res, next) => {
+    req.url = '/api/form-speech';
+    return route(req, res, next);
+  }, body, options);
+}
+
+test('ElevenLabs SDK sends the voice, MP3 format, summary and tips without a score announcement', async (t) => {
   let request;
-  const speech = feedbackSpeechRoute({ apiKey: 'speech-key', fetchImpl: async (url, options) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
     request = JSON.parse(options.body);
-    assert.match(url, /text-to-speech/);
-    assert.equal(options.headers['xi-api-key'], 'speech-key');
+    const target = new URL(url);
+    assert.equal(target.pathname, '/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb');
+    assert.equal(target.searchParams.get('output_format'), 'mp3_44100_128');
+    assert.equal(new Headers(options.headers).get('xi-api-key'), 'speech-key');
+    assert.equal(options.method, 'POST');
+    assert.ok(options.signal instanceof AbortSignal);
     return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg' } });
-  } });
-  const route = (req, res, next) => { req.url = '/api/form-speech'; return speech(req, res, next); };
-  const result = await callRoute(route, { ...feedback, repNumber: 2 });
+  });
+  const result = await callSpeechRoute(feedbackSpeechRoute({ apiKey: 'speech-key' }), { ...feedback, repNumber: 2 });
   assert.equal(result.statusCode, 200);
   assert.equal(result.headers['content-type'], 'audio/mpeg');
+  assert.deepEqual(result.body, Buffer.from([1, 2, 3]));
   assert.equal(request.text, `Rep 2. ${feedback.summary} ${feedback.tips[0]}`);
   assert.doesNotMatch(request.text, /84|out of 100/);
   assert.equal(request.model_id, 'eleven_flash_v2_5');
 });
 
-test('speech rejects invalid rep identities and reports unavailable or non-audio responses', async () => {
+test('speech validates requests before calling the SDK', async (t) => {
+  t.mock.method(globalThis, 'fetch', () => assert.fail('Must not call ElevenLabs'));
   for (const [options, body, expected] of [
-    [{}, feedback, 503],
-    [{ apiKey: 'key' }, { ...feedback, repNumber: 'two' }, 400],
-    [{ apiKey: 'key', fetchImpl: async () => new Response('busy', { status: 429 }) }, feedback, 429],
-    [{ apiKey: 'key', fetchImpl: async () => Response.json({ error: 'bad' }) }, feedback, 502],
+    [{}, feedback, 503], [{ apiKey: 'key' }, { ...feedback, repNumber: 'two' }, 400],
+    [{ apiKey: 'key' }, { ...feedback, tips: [''] }, 400],
   ]) {
-    const speech = feedbackSpeechRoute(options);
-    const result = await callRoute((req, res, next) => { req.url = '/api/form-speech'; return speech(req, res, next); }, body);
+    const result = await callSpeechRoute(feedbackSpeechRoute(options), body);
     assert.equal(result.statusCode, expected);
   }
+});
+
+test('speech does not retry paid SDK calls and keeps provider error details private', async (t) => {
+  let status;
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'private-provider-detail' }, { status }));
+  for (const expected of [429, 502]) {
+    status = expected === 429 ? 429 : 503;
+    const before = fetchMock.mock.callCount();
+    const result = await callSpeechRoute(feedbackSpeechRoute({ apiKey: 'key' }), feedback);
+    assert.equal(result.statusCode, expected);
+    assert.equal(fetchMock.mock.callCount(), before + 1);
+    assert.doesNotMatch(result.body, /private-provider-detail/);
+  }
+});
+
+test('speech rejects non-audio and empty SDK streams', async (t) => {
+  let response;
+  t.mock.method(globalThis, 'fetch', async () => response);
+  for (const candidate of [
+    Response.json({ error: 'bad' }),
+    new Response(new Uint8Array(), { headers: { 'content-type': 'audio/mpeg' } }),
+  ]) {
+    response = candidate;
+    const result = await callSpeechRoute(feedbackSpeechRoute({ apiKey: 'key' }), feedback);
+    assert.equal(result.statusCode, 502);
+    assert.equal(result.headers['content-type'], 'application/json');
+  }
+});
+
+test('speech keeps its 20-second deadline and cancels an unfinished SDK body', async (t) => {
+  const timeout = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', (milliseconds) => {
+    assert.equal(milliseconds, 20_000);
+    return timeout.signal;
+  });
+  let cancelled = false;
+  t.mock.method(globalThis, 'fetch', async () => new Response(new ReadableStream({
+    cancel() { cancelled = true; },
+  }), { headers: { 'content-type': 'audio/mpeg' } }));
+  const pending = callSpeechRoute(feedbackSpeechRoute({ apiKey: 'key' }), feedback);
+  await new Promise(setImmediate);
+  timeout.abort(new DOMException('Timed out', 'TimeoutError'));
+  const result = await pending;
+  assert.equal(result.statusCode, 504);
+  assert.equal(cancelled, true);
+});
+
+test('a client disconnect aborts an in-flight SDK request', async (t) => {
+  let providerSignal;
+  let response;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    providerSignal = options.signal;
+    return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+  });
+  const pending = callSpeechRoute(feedbackSpeechRoute({ apiKey: 'key' }), feedback, {
+    onResponse(res) { response = res; },
+  });
+  await new Promise(setImmediate);
+  response.destroyed = true;
+  response.emit('close');
+  await pending;
+  assert.equal(providerSignal.aborted, true);
+  assert.equal(response.body, undefined);
 });
