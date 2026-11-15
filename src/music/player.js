@@ -1,4 +1,4 @@
-import { planTimeline } from './timeline.js';
+import { mixGain, planTimeline, playbackSpans } from './timeline.js';
 
 const LEAD_SECONDS = 0.035;
 const TICK_MS = 100;
@@ -10,9 +10,10 @@ export function createTimelinePlayer(context, song, parts, {
   preview = false, onChange, onEnded, volume = 0.8, loop = false,
 } = {}) {
   const plan = planTimeline(song, parts);
+  const spans = playbackSpans(plan.blocks);
   const origin = preview && plan.blocks.length ? plan.blocks[0].start : 0;
   const duration = Math.max(0, plan.duration - origin);
-  const normalization = Math.sqrt(Math.max(1, new Set(plan.blocks.map(({ exerciseId }) => exerciseId)).size));
+  const gainLimit = mixGain(plan.blocks);
   const master = context.createGain();
   let currentVolume = Number.isFinite(volume) ? clamp(volume, 0, 1) : 0.8;
   let repeating = Boolean(loop);
@@ -25,7 +26,7 @@ export function createTimelinePlayer(context, song, parts, {
   let disposed = false;
   const active = new Map();
   const retiring = new Set();
-  master.gain.value = currentVolume / normalization;
+  master.gain.value = currentVolume * gainLimit;
   master.connect(context.destination);
 
   function elapsed() {
@@ -60,7 +61,8 @@ export function createTimelinePlayer(context, song, parts, {
     for (const entry of active.values()) {
       const { source, gain } = entry;
       source.onended = () => disconnect(entry);
-      gain.gain.cancelScheduledValues(now);
+      if (typeof gain.gain.cancelAndHoldAtTime === 'function') gain.gain.cancelAndHoldAtTime(now);
+      else gain.gain.cancelScheduledValues(now);
       gain.gain.setTargetAtTime(0, now, 0.004);
       retiring.add(entry);
       try { source.stop(immediate ? now : now + 0.02); } catch { disconnect(entry); }
@@ -85,7 +87,7 @@ export function createTimelinePlayer(context, song, parts, {
   function scheduleCycle(cycle, from = 0) {
     const token = generation;
     const cycleStart = anchor + cycle * duration;
-    for (const block of plan.blocks) {
+    for (const block of spans) {
       const blockStart = block.start - origin;
       const blockEnd = block.end - origin;
       if (blockEnd <= from) continue;
@@ -183,7 +185,7 @@ export function createTimelinePlayer(context, song, parts, {
       if (disposed || !Number.isFinite(value)) return getState();
       currentVolume = clamp(value, 0, 1);
       master.gain.cancelScheduledValues(context.currentTime);
-      master.gain.setTargetAtTime(currentVolume / normalization, context.currentTime, 0.01);
+      master.gain.setTargetAtTime(currentVolume * gainLimit, context.currentTime, 0.01);
       emit();
       return getState();
     },

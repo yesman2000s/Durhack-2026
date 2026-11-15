@@ -48,7 +48,7 @@ The studio keeps its illustrated instruments and coloured, raised waveform note 
 
 Turn **Include in mix** off in a completed note's dialog to exclude that section, or turn on an instrument's **Mute** switch to mute all its unlocked notes. Turn the switch off to include those notes again. Mix changes retain playback position. The chosen song and note mutes are saved to the account.
 
-The home player uses beat-matched excerpts of three Kevin MacLeod instrumentals, separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock provides drums, bass, piano, and guitar stems. Hip-hop and EDM map squat to low percussion, knee raise to bass, push-ups to the melodic residual, and heel raises to high percussion. The percussion bands are filtered from drums with FFmpeg; the studio labels the actual sounds as Drums, Bass, Melody, and Percussion for these genres.
+The home player uses beat-matched excerpts of three Kevin MacLeod instrumentals, separated using [Demucs HTDemucs six-stem](https://github.com/facebookresearch/demucs). Rock provides drums, bass, piano, and guitar stems. Hip-hop and EDM map squat to low percussion, knee raise to bass, push-ups to the melodic residual, and heel raises to high percussion. The low percussion and high percussion tracks are complementary bands from the same drum stem and use the same gain, so they line up and reconstruct the drum track when played together.
 
 - Hip-hop · [Griphop](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100413)
 - EDM · [EDM Detection Mode](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500026)

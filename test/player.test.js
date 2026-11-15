@@ -36,7 +36,7 @@ test('pause retains position and resume starts at the precise source offset with
   assert.equal(player.getState().duration, 16);
   assert.equal(context.sources.length, 0);
   player.play(); player.play();
-  assert.equal(context.sources.length, 2);
+  assert.equal(context.sources.length, 1);
   const oldCallbacks = context.sources.map((source) => source.onended);
   context.currentTime = 7.035;
   player.pause();
@@ -45,10 +45,9 @@ test('pause retains position and resume starts at the precise source offset with
   assert.ok(context.sources.every((source) => source.stops.length === 1));
   context.currentTime = 11;
   player.play();
-  near(context.sources[2].started[0], 11.035);
-  near(context.sources[2].started[1], 3);
-  near(context.sources[2].started[2], 5);
-  near(context.sources[3].started[0], 16.035);
+  near(context.sources[1].started[0], 11.035);
+  near(context.sources[1].started[1], 3);
+  near(context.sources[1].started[2], 13);
   oldCallbacks.forEach((callback) => callback());
   assert.equal(ended, 0);
   assert.equal(player.getState().status, 'playing');
@@ -64,7 +63,7 @@ test('seeking clips the current block, keeps muted gaps, and never plays locked 
   player.play();
   context.currentTime = 5;
   player.seek(11);
-  const resumed = context.sources.slice(3);
+  const resumed = context.sources.slice(2);
   assert.equal(resumed.length, 2);
   near(resumed[0].started[0], 5.035);
   near(resumed[0].started[1], 11);
@@ -131,6 +130,19 @@ test('volume changes update the live master gain, including mute, without pausin
   player.setVolume(Number.NaN);
   assert.equal(player.getState().volume, 1);
   assert.equal(context.sources.length, count);
+});
+
+test('a loud layered mix leaves headroom at maximum volume', (t) => {
+  const context = audioContext();
+  const parts = [part([1]), part([1], 'knee-raise')].map((entry) => ({
+    ...entry,
+    buffer: { ...entry.buffer, numberOfChannels: 2, getChannelData: (channel) => (
+      channel === 0 ? Float32Array.of(0.2) : Float32Array.of(-1.25)
+    ) },
+  }));
+  const player = createTimelinePlayer(context, song, parts, { volume: 1 });
+  t.after(() => player.dispose());
+  near(context.gains[0].gain.value, 0.9 / 2.5);
 });
 
 test('stop and explicit end seek do not report a natural completion; replay starts from zero', (t) => {

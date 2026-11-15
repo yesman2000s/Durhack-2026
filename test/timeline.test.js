@@ -75,7 +75,7 @@ test('scheduled chunks preserve gaps, synchronize lanes, and do not overlap at b
   let ended = 0;
   playTimeline(context, song, [part([1, 2, 4]), part([2], 'knee-raise')], () => ended++);
   assert.deepEqual(context.sources.map(({ started }) => started), [
-    [4.035, 0, 8], [12.035, 8, 8], [12.035, 8, 8], [28.035, 24, 8],
+    [4.035, 0, 16], [12.035, 8, 8], [28.035, 24, 8],
   ]);
   for (let index = 0; index < context.sources.length; index++) {
     const [start, , duration] = context.sources[index].started;

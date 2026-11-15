@@ -47,8 +47,46 @@ export function planTimeline(song, parts) {
   return { blocks, secondsPerBeat, duration: Math.max(0, ...blocks.map(({ end }) => end)) };
 }
 
+export function playbackSpans(blocks) {
+  const latestByTrack = new Map();
+  const spans = [];
+  for (const block of blocks) {
+    const previous = latestByTrack.get(block.exerciseId);
+    if (previous?.buffer === block.buffer && previous.end === block.start &&
+        Math.abs(previous.offset + previous.duration - block.offset) < 1e-9) {
+      previous.end = block.end;
+      previous.duration = previous.end - previous.start;
+      continue;
+    }
+    const span = { ...block };
+    spans.push(span);
+    latestByTrack.set(block.exerciseId, span);
+  }
+  return spans;
+}
+
+const bufferPeaks = new WeakMap();
+
+export function mixGain(blocks) {
+  const trackPeaks = new Map();
+  for (const { exerciseId, buffer } of blocks) {
+    if (!bufferPeaks.has(buffer)) {
+      let peak = 0;
+      for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+        const samples = buffer.getChannelData(channel);
+        for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+      }
+      bufferPeaks.set(buffer, peak);
+    }
+    trackPeaks.set(exerciseId, Math.max(trackPeaks.get(exerciseId) ?? 0, bufferPeaks.get(buffer)));
+  }
+  const peakBound = [...trackPeaks.values()].reduce((sum, peak) => sum + peak, 0);
+  return Math.min(1 / Math.sqrt(Math.max(1, trackPeaks.size)), 0.9 / peakBound);
+}
+
 export function playTimeline(context, song, parts, onEnded = () => {}, { onProgress, preview = false } = {}) {
   const plan = planTimeline(song, parts);
+  const spans = playbackSpans(plan.blocks);
   const origin = preview && plan.blocks.length ? plan.blocks[0].start : 0;
   const duration = Math.max(0, plan.duration - origin);
   const startAt = context.currentTime + 0.035;
@@ -103,11 +141,11 @@ export function playTimeline(context, song, parts, onEnded = () => {}, { onProgr
 
   try {
     master = context.createGain();
-    master.gain.value = 0.8 / Math.sqrt(new Set(plan.blocks.map(({ exerciseId }) => exerciseId)).size);
+    master.gain.value = 0.8 * mixGain(plan.blocks);
     master.connect(context.destination);
     // Create every source before starting any, so a source's completion cannot
     // mistake an unscheduled later block for the end of the whole mix.
-    for (const block of plan.blocks) {
+    for (const block of spans) {
       const source = context.createBufferSource();
       const gain = context.createGain();
       source.buffer = block.buffer;
@@ -124,7 +162,7 @@ export function playTimeline(context, song, parts, onEnded = () => {}, { onProgr
       gain.gain.linearRampToValueAtTime(0, end);
     }
     for (const [index, source] of [...active.keys()].entries()) {
-      const block = plan.blocks[index];
+      const block = spans[index];
       source.start(startAt + (block.start - origin), block.offset, block.duration);
     }
   } catch (error) {
