@@ -141,7 +141,7 @@ function PracticeGuide({ live, reference, variant, exercise, guideRef }) {
   </details>;
 }
 
-function RepResult({ result, review, onRetry, onClear, onPlayGuide, titleRef }) {
+function RepResult({ result, review, onRetry, onClear, onPlayGuide, titleRef, onRead, onResumeAudio, onStopAudio, audioState }) {
   const [selected, setSelected] = useState(result.snapshots.find(({ phase }) => phase === 'bottom')?.phase ?? result.snapshots[0]?.phase);
   const [expanded, setExpanded] = useState(false);
   const selectedSnapshot = result.snapshots.find(({ phase }) => phase === selected);
@@ -178,7 +178,7 @@ function RepResult({ result, review, onRetry, onClear, onPlayGuide, titleRef }) 
         <button className="button button-primary" onClick={() => downloadEvidence(result)}><Icon name="download" />Download rep data</button>
       </div>
     </div>
-    <FormFeedback rep={result} review={review} onRetry={onRetry} />
+    <FormFeedback rep={result} review={review} onRetry={onRetry} onRead={onRead} onPlay={onResumeAudio} onStop={onStopAudio} audioState={audioState} />
     <div className="result-layout">
       <div className="result-evidence">
         {result.snapshots.length > 0 && <div className="snapshots-grid" role="group" aria-label="Rep snapshots">
@@ -325,6 +325,22 @@ function App() {
     setWorkoutView(next);
   }
 
+  function setSpokenFeedback(enabled) {
+    voicePreference.current = enabled;
+    setVoiceEnabled(enabled);
+    getCoach().setMuted(!enabled || document.hidden);
+    if (enabled && !document.hidden) void getCoach().unlockAudio();
+  }
+
+  function readFeedback(feedback, options) {
+    if (!feedback) return;
+    getCoach().setMuted(true);
+    setSpokenFeedback(true);
+    getCoach().readFeedback(feedback, options);
+  }
+
+  function stopFeedback() { setSpokenFeedback(false); }
+
   function persistAttempt(context, patch = {}) {
     if (!context) return Promise.resolve();
     const reps = [...context.reps.values()].map((rep) => ({ ...rep, review: context.reviews[rep.id] ?? reviewData.current[rep.id] ?? null,
@@ -460,9 +476,9 @@ function App() {
       if (context.session?.mode === 'set') {
         const feedback = summarizeSet([...context.reps.values()].map((rep) => ({ id: rep.id, review: context.reviews[rep.id] })));
         getCoach().speak(feedback.summary, feedback.focus.map((tip) => tip.text));
-      } else {
-        getCoach().speak(data.attempt.passed ? 'A new personal best! Your new note is ready.' : data.attempt.personalBest ? 'A new personal best! Your score is saved.' : 'Your workout is saved.');
       }
+      // Single-rep analysis already queued the coaching. A saved announcement
+      // here would replace that feedback while its audio is still loading.
     } catch (err) {
       if (levelAttempt.current === context) { setError(err.message); setLevelPhase('review-error'); }
     } finally { context.finishing = false; }
@@ -511,6 +527,7 @@ function App() {
   }
 
   function enableAudio() {
+    if (voicePreference.current) void getCoach().unlockAudio();
     if (!playSound.current || !window.AudioContext) return;
     try {
       audio.current ??= new AudioContext();
@@ -1024,6 +1041,7 @@ function App() {
 
   async function startVideo(file) {
     if (!file || (recorder.current && recorder.current.kind !== 'video') || !canStartWorkout()) return;
+    enableAudio();
     requestCaptureFullscreen();
     recorder.current?.handle?.stop();
     resetSetup();
@@ -1066,6 +1084,7 @@ function App() {
 
   function chooseVideo() {
     if (!videoInput.current) return;
+    enableAudio();
     videoInput.current.value = '';
     videoInput.current.click();
   }
@@ -1244,6 +1263,9 @@ function App() {
   const reviewBusy = levelPhase === 'reviewing' || levelPhase === 'saving';
   const setFeedback = workoutView?.mode === 'set' && !workoutView.active && levelPhase === 'complete'
     ? summarizeSet(workoutView.reps.map((rep) => ({ id: rep.id, review: reviews[rep.id] }))) : null;
+  const resultNarration = setFeedback
+    ? { score: null, summary: setFeedback.summary, tips: setFeedback.focus.map((tip) => tip.text) }
+    : currentFeedback;
   const nextLevel = progress?.tracks?.find((entry) => entry.exerciseId === exercise)?.target?.level;
   const signInUrl = `/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
   const liveCue = currentFeedback?.summary || instantFeedback?.summary || viewfinderCue;
@@ -1285,11 +1307,9 @@ function App() {
               </div>
               <div className="workout-hud-actions">
                 <button className="workout-icon-button" aria-label={voiceEnabled ? 'Mute coaching audio' : 'Enable coaching audio'} aria-pressed={!voiceEnabled} onClick={() => {
-                  voicePreference.current = !voicePreference.current;
-                  setVoiceEnabled(voicePreference.current);
+                  setSpokenFeedback(!voicePreference.current);
                   playSound.current = voicePreference.current;
                   setSoundEnabled(voicePreference.current);
-                  getCoach().setMuted(!voicePreference.current);
                   enableAudio();
                 }}><Icon name={voiceEnabled ? 'sound' : 'mute'} /></button>
                 <button className="workout-end" onClick={() => finishWorkout('manual')}>End set</button>
@@ -1318,7 +1338,8 @@ function App() {
                 </div>}
                 {levelOutcome && latestRep && <div className="rep-feedback-content"><ScoreRing score={levelOutcome.score} label="Workout score" /><div className="rep-feedback-copy"><strong>{workoutView.repCount} {workoutView.repCount === 1 ? 'rep' : 'reps'} captured</strong>{!setFeedback && currentFeedback && <><p>{currentFeedback.summary}</p>{currentFeedback.tips.map((tip) => <p key={tip}>{tip}</p>)}</>}</div></div>}
                 {setFeedback && <SetFeedback feedback={setFeedback} />}
-                {setFeedback && <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />}
+                <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()}
+                  onRead={resultNarration ? () => readFeedback(resultNarration, setFeedback ? undefined : { repId: latestRep?.id, repNumber: latestRep?.repNumber }) : undefined} onStop={stopFeedback} />
                 {levelPhase === 'review-error' && <div className="level-result-actions">
                   <button className="button button-primary" onClick={retryLevelReviews}>Retry and finish</button>
                   <button className="button button-secondary" onClick={() => void finishLevelAttempt(levelAttempt.current, 'error')}>Save without unlocking</button>
@@ -1382,12 +1403,15 @@ function App() {
               </label>
               <label className="training-toggle">
                 <input type="checkbox" role="switch" aria-label="Spoken feedback" checked={voiceEnabled} onChange={(event) => {
-                  voicePreference.current = event.currentTarget.checked;
-                  setVoiceEnabled(voicePreference.current);
-                  getCoach().setMuted(!voicePreference.current);
+                  setSpokenFeedback(event.currentTarget.checked);
                 }} />
-                <span>Spoken feedback<small>Hear a little help as you move</small></span>
+                <span>Spoken feedback<small>Read your coaching after each rep</small></span>
               </label>
+            </div>
+            <div className="feedback-voice-preview">
+              <button type="button" className="feedback-audio-button" disabled={captureLocked || loading || ['loading', 'playing'].includes(coachAudio.status)}
+                onClick={() => readFeedback({ score: null, summary: "This is Motif. I'll read your feedback after each rep.", tips: [] })}>Test voice</button>
+              {!latestRep && <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} onStop={stopFeedback} />}
             </div>
             <details className="session-options"><summary>Exercise settings</summary><div className="camera-settings">
               {!requestedExercise ? <>
@@ -1430,7 +1454,8 @@ function App() {
               {!currentFeedback && <InstantRepFeedback rep={latestRep} pending={latestReview?.status !== 'error'} />}
               {latestReview?.error && <p>{latestReview.error} <button className="text-button" onClick={() => retryFeedback(repResults.current.get(latestRep.id))}>Retry</button></p>}
               {currentFeedback && <div className="rep-feedback-content"><ScoreRing score={currentFeedback.score} compact /><p className="rep-feedback-copy">{currentFeedback.summary} {currentFeedback.tips.join(' ')}</p></div>}
-              <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()} />
+              <CoachingAudioControl state={coachAudio} onPlay={() => void getCoach().resumeAudio()}
+                onRead={currentFeedback ? () => readFeedback(currentFeedback, { repId: latestRep.id, repNumber: latestRep.repNumber }) : undefined} onStop={stopFeedback} />
             </div>}
           </div>
         </section>
@@ -1469,7 +1494,9 @@ function App() {
           </button>;
         })}</div>
       </section>}
-      {result && <RepResult key={result.id} result={result} review={reviews[result.id]} onRetry={() => retryFeedback(result)} titleRef={reviewTitle} onPlayGuide={videoReview?.evidence.id === result.id ? playVideoGuide : undefined} onClear={() => {
+      {result && <RepResult key={result.id} result={result} review={reviews[result.id]} onRetry={() => retryFeedback(result)}
+        onRead={() => readFeedback(reviews[result.id]?.feedback, { repId: result.id, repNumber: result.session?.repNumber ?? result.repNumber })} onResumeAudio={() => void getCoach().resumeAudio()} onStopAudio={stopFeedback}
+        audioState={coachAudio.repId === result.id ? coachAudio : { status: 'idle' }} titleRef={reviewTitle} onPlayGuide={videoReview?.evidence.id === result.id ? playVideoGuide : undefined} onClear={() => {
         setResult(null);
         setVideoReview(null);
         setNotice('Result cleared.');

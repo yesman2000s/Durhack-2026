@@ -253,7 +253,7 @@ function StudioApp() {
     </main>
     {authOpen && <AuthDialog onClose={() => { pendingWorkout.current = null; setAuthOpen(false); }} onSuccess={signedIn} />}
     {shortcutsOpen && <Dialog label="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)} className="shortcuts-dialog"><span className="eyebrow">PLAYER CONTROLS</span><h2>Keep your flow</h2><p>Use these while browsing your music.</p><dl><div><dt>Play or pause</dt><dd><kbd>Space</kbd></dd></div><div><dt>Skip back / forward 5 seconds</dt><dd><kbd>←</kbd><kbd>→</kbd></dd></div><div><dt>Mute or unmute</dt><dd><kbd>M</kbd></dd></div></dl><p>Player shortcuts stay out of the way while you type or use a control.</p></Dialog>}
-    {viewAttempt && user && <AttemptViewer key={`${user.id}:${viewAttempt.id}`} user={user} attempt={viewAttempt} onClose={() => setViewAttempt(null)} />}
+    {viewAttempt && user && <AttemptViewer key={`${user.id}:${viewAttempt.id}`} user={user} attempt={viewAttempt} onReadFeedbackStart={stopMusic} onClose={() => setViewAttempt(null)} />}
   </div>;
 }
 

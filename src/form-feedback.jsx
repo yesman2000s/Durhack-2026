@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScoreRing } from './score-ring.jsx';
 import { instantRepFeedback } from './instant-feedback.js';
+import './feedback-audio.css';
 
 export function InstantRepFeedback({ rep, pending = true }) {
   const feedback = instantRepFeedback(rep);
@@ -8,7 +9,7 @@ export function InstantRepFeedback({ rep, pending = true }) {
     {pending && <small>Your form score and coaching are being reviewed.</small>}</div>;
 }
 
-export function FormFeedback({ rep, review, onRetry }) {
+export function FormFeedback({ rep, review, onRetry, onPlay, onRead, onStop, audioState }) {
   const feedback = review?.feedback;
   const heading = `form-feedback-${rep.id}`;
   const pending = review?.status === 'queued' || review?.status === 'analyzing';
@@ -24,16 +25,29 @@ export function FormFeedback({ rep, review, onRetry }) {
         {feedback.tips.length > 0 && <ul>{feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}
         </div>
       </div>}
-      {review?.speechError && <p>{review.speechError} Your written feedback is still available.</p>}
+      {review?.speechError && !audioState && <p>{review.speechError} Your written feedback is still available.</p>}
     </div>
+    {feedback && <CoachingAudioControl state={audioState} onPlay={onPlay} onRead={onRead} onStop={onStop} />}
     {review?.status === 'error' && onRetry && <button className="button button-secondary" type="button" onClick={onRetry}>Retry analysis</button>}
   </section>;
 }
 
-export function CoachingAudioControl({ state, onPlay }) {
-  if (state?.status === 'blocked') return <button className="button button-secondary" type="button" onClick={onPlay}>Play coaching audio</button>;
-  if (state?.status === 'loading') return <span role="status">Preparing spoken feedback…</span>;
-  if (state?.status === 'playing') return <span role="status">Speaking feedback{state.repNumber ? ` for rep ${state.repNumber}` : ''}</span>;
-  if (state?.status === 'error') return <span role="status">{state.error}</span>;
-  return null;
+export function CoachingAudioControl({ state, onPlay, onRead, onStop }) {
+  const status = state?.status ?? 'idle';
+  const active = status === 'loading' || status === 'playing';
+  const blocked = status === 'blocked';
+  const failed = status === 'error';
+  const play = onPlay ?? onRead;
+  const message = status === 'loading' ? 'Preparing spoken feedback…'
+    : status === 'playing' ? `Speaking feedback${state.repNumber ? ` for rep ${state.repNumber}` : ''}`
+      : blocked ? 'Your feedback is ready to play.'
+        : failed ? state.error || 'Feedback audio could not play. Try reading it again.' : '';
+  if (!active && !blocked && !failed && !onRead) return null;
+  return <div className="feedback-audio" data-status={status}>
+    <span className="feedback-audio-status" role="status" aria-live="polite" aria-atomic="true">{message}</span>
+    {blocked && <button className="feedback-audio-button" type="button" onClick={play} disabled={!play}>Play coaching audio</button>}
+    {active && onStop && <button className="feedback-audio-button" type="button" onClick={onStop} aria-label="Stop spoken feedback">Stop</button>}
+    {failed && onRead && <button className="feedback-audio-button" type="button" onClick={onRead}>Retry reading</button>}
+    {!active && !blocked && !failed && onRead && <button className="feedback-audio-button" type="button" onClick={onRead}>Read feedback aloud</button>}
+  </div>;
 }

@@ -1,0 +1,13 @@
+.feedback-audio { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; color: inherit; text-align: left; }
+.feedback-audio-status { min-width: 0; font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.feedback-audio-status:empty { display: none; }
+.feedback-audio-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; max-width: 100%; padding: 10px 14px; border: 1px solid currentColor; border-radius: 10px; color: inherit; background: transparent; font: inherit; font-size: .82rem; font-weight: 650; line-height: 1.35; text-align: center; cursor: pointer; touch-action: manipulation; }
+.feedback-audio-button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.feedback-audio-button:disabled { opacity: .45; cursor: not-allowed; }
+.level-result-card > .feedback-audio { justify-content: center; }
+.feedback-voice-preview { display: grid; gap: 8px; }
+.feedback-voice-preview > button { justify-self: start; }
+.feedback-voice-preview .feedback-audio { margin-top: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .feedback-audio-button:hover:enabled { background: color-mix(in srgb, currentColor 8%, transparent); }
+}

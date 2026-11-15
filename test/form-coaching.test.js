@@ -158,7 +158,7 @@ test('ElevenLabs SDK sends the voice, MP3 format, summary and tips without a sco
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     request = JSON.parse(options.body);
     const target = new URL(url);
-    assert.equal(target.pathname, '/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb');
+    assert.equal(target.pathname, '/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL');
     assert.equal(target.searchParams.get('output_format'), 'mp3_44100_128');
     assert.equal(new Headers(options.headers).get('xi-api-key'), 'speech-key');
     assert.equal(options.method, 'POST');

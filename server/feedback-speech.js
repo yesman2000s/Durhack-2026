@@ -3,7 +3,7 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { normalizeFeedback } from './feedback.js';
 import { HttpError, jsonRoute } from './json-route.js';
 
-const defaultVoice = 'JBFqnCBsd6RMkjVDRZzb';
+const defaultVoice = 'EXAVITQu4vr4xnSDxMaL'; // Sarah
 
 export function feedbackSpeechRoute({
   apiKey, voiceId = defaultVoice, client = apiKey ? new ElevenLabsClient({ apiKey }) : undefined,

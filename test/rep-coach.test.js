@@ -36,8 +36,11 @@ function fixture() {
   const revoked = [];
   const created = [];
   let blockAudio = false;
+  let pendingPlay;
   class FakeAudio extends EventTarget {
     paused = true;
+    ended = false;
+    error = null;
     plays = 0;
     pauses = 0;
     async play() {
@@ -45,11 +48,15 @@ function fixture() {
       if (blockAudio) throw Object.assign(new Error('Autoplay blocked'), { name: 'NotAllowedError' });
       assert.ok(audios.every((other) => other === this || other.paused), 'audio clips must never overlap');
       this.paused = false;
+      this.ended = false;
+      const pending = pendingPlay;
+      pendingPlay = undefined;
+      if (pending) await pending;
     }
     pause() { this.pauses++; this.paused = true; }
-    load() {}
+    load() { this.ended = false; this.error = null; }
     removeAttribute() { this.src = ''; }
-    end() { this.paused = true; this.dispatchEvent(new Event('ended')); }
+    end() { this.paused = true; this.ended = true; this.dispatchEvent(new Event('ended')); }
   }
   const coach = createRepCoach({
     fetchImpl(url, options) {
@@ -65,6 +72,11 @@ function fixture() {
     scores: () => requests.filter(({ url }) => url === '/api/form-score'),
     speech: () => requests.filter(({ url }) => url === '/api/form-speech'),
     blockAudio: (value) => { blockAudio = value; },
+    deferPlay() {
+      let resolve, reject;
+      pendingPlay = new Promise((yes, no) => { resolve = yes; reject = no; });
+      return { resolve, reject };
+    },
   };
 }
 
@@ -153,7 +165,9 @@ test('speech finishes the current cue and retains only the latest unsounded resp
   assert.equal(JSON.parse(f.speech()[1].options.body).repNumber, 3);
   f.speech()[1].resolve(response(null));
   await turn();
-  assert.equal(f.audios[1].paused, false);
+  assert.equal(f.audios.length, 1, 'successive clips reuse the gesture-unlocked element');
+  assert.equal(f.audios[0].paused, false);
+  assert.equal(f.audios[0].plays, 2);
   assert.deepEqual(f.revoked, ['blob:1']);
   assert.ok([...f.reviews.values()].every(({ status }) => status === 'complete'));
   f.coach.dispose();
@@ -295,4 +309,157 @@ test('motivational speech uses the same non-overlapping player and valid feedbac
   await turn();
   assert.equal(f.speech().length, 2);
   f.coach.dispose();
+});
+
+test('gesture-time unlocking plays valid silence synchronously and reuses that element for later feedback', async (t) => {
+  const f = fixture();
+  t.after(() => f.coach.dispose());
+  const unlocking = f.coach.unlockAudio();
+  assert.equal(f.audios.length, 1);
+  const audio = f.audios[0];
+  assert.equal(audio.plays, 1, 'play is invoked before the gesture handler returns');
+  const wav = Buffer.from(audio.src.split(',')[1], 'base64');
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(wav.toString('ascii', 8, 12), 'WAVE');
+  assert.equal(wav.readUInt32LE(4), wav.length - 8);
+  assert.equal(wav.readUInt32LE(40), wav.length - 44);
+  assert.ok(wav.subarray(44).every((sample) => sample === 128));
+  assert.equal(await unlocking, true);
+  assert.equal(audio.paused, true);
+  assert.equal(audio.src, '');
+  f.coach.enqueue(rep(1), session(1));
+  f.scores()[0].resolve(response(feedback()));
+  await turn();
+  f.speech()[0].resolve(response(null));
+  await turn();
+  assert.equal(f.audios.length, 1);
+  assert.equal(audio.plays, 2);
+  assert.equal(audio.paused, false);
+  assert.equal(audio.src, 'blob:1');
+  assert.equal(f.audioStates.at(-1).status, 'playing');
+});
+
+test('late silent-prime completion or rejection cannot clear or pause real feedback', async (t) => {
+  for (const rejected of [false, true]) {
+    const f = fixture();
+    t.after(() => f.coach.dispose());
+    const deferred = f.deferPlay();
+    const unlocking = f.coach.unlockAudio();
+    assert.equal(f.coach.readFeedback(feedback()), true);
+    f.speech()[0].resolve(response(null));
+    await turn();
+    const audio = f.audios[0], pauses = audio.pauses, states = f.audioStates.length;
+    assert.equal(audio.src, 'blob:1');
+    assert.equal(audio.paused, false);
+    if (rejected) deferred.reject(Object.assign(new Error('Old autoplay denial'), { name: 'NotAllowedError' }));
+    else deferred.resolve();
+    assert.equal(await unlocking, false);
+    assert.equal(audio.src, 'blob:1');
+    assert.equal(audio.paused, false);
+    assert.equal(audio.pauses, pauses);
+    assert.equal(f.audioStates.length, states);
+    audio.dispatchEvent(new Event('ended'));
+    assert.equal(f.audioStates.at(-1).status, 'playing', 'stale ended event does not end a new source');
+    audio.end();
+    assert.equal(f.audioStates.at(-1).status, 'idle');
+  }
+});
+
+test('mute, reset and disposal invalidate a pending audio unlock without late changes', async (t) => {
+  for (const action of ['mute', 'reset', 'dispose']) {
+    const f = fixture();
+    t.after(() => f.coach.dispose());
+    const deferred = f.deferPlay();
+    const unlocking = f.coach.unlockAudio();
+    if (action === 'mute') f.coach.setMuted(true);
+    else f.coach[action]();
+    const audio = f.audios[0], pauses = audio.pauses, states = f.audioStates.length;
+    assert.equal(audio.paused, true);
+    assert.equal(audio.src, '');
+    deferred.resolve();
+    assert.equal(await unlocking, false);
+    assert.equal(audio.pauses, pauses);
+    assert.equal(audio.src, '');
+    assert.equal(f.audioStates.length, states);
+    if (action !== 'reset') {
+      assert.equal(await f.coach.unlockAudio(), false);
+      assert.equal(f.coach.readFeedback(feedback()), false);
+      assert.equal(f.speech().length, 0);
+    }
+  }
+});
+
+test('a blocked prime can recover from a later gesture on the same prepared feedback element', async (t) => {
+  const f = fixture();
+  t.after(() => f.coach.dispose());
+  f.blockAudio(true);
+  assert.equal(await f.coach.unlockAudio(), false);
+  assert.equal(f.audioStates.at(-1).status, 'blocked');
+  f.coach.readFeedback(feedback(), { repId: '1', repNumber: 1 });
+  f.speech()[0].resolve(response(null));
+  await turn();
+  assert.equal(f.audioStates.at(-1).status, 'blocked');
+  assert.equal(f.audios[0].plays, 1, 'blocked feedback waits for the gesture');
+  f.blockAudio(false);
+  assert.equal(await f.coach.unlockAudio(), true);
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.audios[0].paused, false);
+  assert.equal(f.audioStates.at(-1).repId, '1');
+  assert.equal(f.audioStates.at(-1).status, 'playing');
+});
+
+test('readFeedback replays saved feedback without re-analysis and accepts missing summaries', async (t) => {
+  const f = fixture();
+  t.after(() => f.coach.dispose());
+  const saved = { score: 82, tips: [] };
+  assert.equal(f.coach.readFeedback(saved, { repId: 'saved-rep', repNumber: 2 }), true);
+  assert.equal(f.scores().length, 0);
+  assert.deepEqual(JSON.parse(f.speech()[0].options.body), { ...saved, repNumber: 2 });
+  f.speech()[0].resolve(response({ error: 'Temporary speech failure.' }, false));
+  await turn();
+  assert.equal(f.audioStates.at(-1).status, 'error');
+  assert.equal(f.reviews.get('saved-rep').speechError, 'Temporary speech failure.');
+  assert.equal(f.coach.readFeedback(saved, { repId: 'saved-rep', repNumber: 2 }), true);
+  f.speech()[1].resolve(response(null));
+  await turn();
+  assert.equal(f.audios[0].paused, false);
+  assert.equal(f.reviews.get('saved-rep').speechError, '');
+  assert.equal(f.scores().length, 0);
+  f.audios[0].end();
+  assert.equal(f.coach.readFeedback({ score: null, tips: [] }), true, 'unscored legacy feedback uses server filming fallback');
+  assert.equal(f.speech().length, 3);
+});
+
+test('explicit feedback reads finish the current narration and retain only the latest next request', async (t) => {
+  const f = fixture();
+  t.after(() => f.coach.dispose());
+  f.coach.readFeedback(feedback(1), { repId: '1', repNumber: 1 });
+  f.speech()[0].resolve(response(null));
+  await turn();
+  f.coach.readFeedback(feedback(2), { repId: '2', repNumber: 2 });
+  f.coach.readFeedback(feedback(3), { repId: '3', repNumber: 3 });
+  assert.equal(f.speech().length, 1);
+  assert.equal(f.reviews.get('2').speechStatus, 'superseded');
+  f.audios[0].end();
+  await turn();
+  assert.equal(f.speech().length, 2);
+  assert.equal(JSON.parse(f.speech()[1].options.body).repNumber, 3);
+  f.speech()[1].resolve(response(null));
+  await turn();
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.audios[0].paused, false);
+  assert.equal(f.scores().length, 0);
+});
+
+test('invalid saved feedback and unavailable media support report errors without analysis', async (t) => {
+  const f = fixture();
+  t.after(() => f.coach.dispose());
+  assert.equal(f.coach.readFeedback({ score: 101, tips: [] }), false);
+  assert.equal(f.audioStates.at(-1).status, 'error');
+  assert.equal(f.requests.length, 0);
+  const states = [];
+  const coach = createRepCoach({ audioFactory() { throw new Error('Audio unavailable'); }, onAudioState: (state) => states.push(state) });
+  t.after(() => coach.dispose());
+  assert.equal(await coach.unlockAudio(), false);
+  assert.equal(states.at(-1).status, 'error');
 });

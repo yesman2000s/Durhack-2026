@@ -4,6 +4,8 @@ import { getLocalAttempt } from './local-attempts.js';
 import { attemptOutcome, mergeAttemptReps } from './attempt-review.js';
 import { summarizeSet } from './set-feedback.js';
 import { SetFeedback } from './set-feedback.jsx';
+import { CoachingAudioControl } from './form-feedback.jsx';
+import { createRepCoach } from './rep-coach.js';
 import { exerciseProgress, progressCoordinates } from './exercise-progress.js';
 import { MusicNote } from './music/music-note.jsx';
 import './studio-history.css';
@@ -120,11 +122,24 @@ export function HistoryPanel({ user, attempts, onSignIn, onBackToMusic, onViewAt
   </section>;
 }
 
-export function AttemptViewer({ user, attempt, onClose }) {
+export function AttemptViewer({ user, attempt, onClose, onReadFeedbackStart }) {
   const dialogRef = useRef(null);
+  const videoRef = useRef(null), coachRef = useRef(null);
   const [detail, setDetail] = useState(attempt), [local, setLocal] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null), [error, setError] = useState(''), [loading, setLoading] = useState(true);
+  const [audioState, setAudioState] = useState({ status: 'idle' });
   useEffect(() => { const dialog = dialogRef.current; dialog.showModal(); return () => dialog.close(); }, []);
+  useEffect(() => {
+    let active = true;
+    setAudioState({ status: 'idle' });
+    const coach = createRepCoach({ onAudioState: (state) => { if (active) setAudioState(state); } });
+    coachRef.current = coach;
+    return () => {
+      active = false;
+      coach.dispose();
+      if (coachRef.current === coach) coachRef.current = null;
+    };
+  }, [user.id, attempt.id]);
   useEffect(() => {
     let active = true, url;
     setDetail(attempt); setLocal(null); setVideoUrl(null); setError(''); setLoading(true);
@@ -150,6 +165,27 @@ export function AttemptViewer({ user, attempt, onClose }) {
   const track = EXERCISE_TRACKS.find(({ id }) => id === attempt.exerciseId);
   const reps = mergeAttemptReps(local?.reps, detail.reps);
   const result = attemptOutcome(detail);
+  const setFeedback = !loading && detail.mode === 'set' && detail.status !== 'active' ? summarizeSet(reps) : null;
+  const summaryFeedback = setFeedback?.reviewed ? { score: setFeedback.average, summary: setFeedback.summary, tips: setFeedback.focus.map(({ text }) => text) }
+    : !setFeedback && detail.feedback;
+  const summaryAudioId = `${attempt.id}:summary`;
+  function stopFeedback() { coachRef.current?.setMuted(true); }
+  function readFeedback(feedback, repId, repNumber) {
+    const coach = coachRef.current;
+    if (!coach || !feedback) return;
+    videoRef.current?.pause();
+    onReadFeedbackStart?.();
+    coach.setMuted(true);
+    coach.setMuted(false);
+    void coach.unlockAudio();
+    coach.readFeedback(feedback, { repId, repNumber });
+  }
+  function resumeFeedback() {
+    videoRef.current?.pause();
+    onReadFeedbackStart?.();
+    void coachRef.current?.resumeAudio();
+  }
+  function closeViewer() { stopFeedback(); onClose(); }
   function download() {
     if (!videoUrl) return;
     const link = document.createElement('a'); link.href = videoUrl;
@@ -159,25 +195,30 @@ export function AttemptViewer({ user, attempt, onClose }) {
   function backdropClick(event) {
     if (event.target !== event.currentTarget) return;
     const bounds = event.currentTarget.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeViewer();
   }
-  return <dialog ref={dialogRef} className="studio-dialog attempt-dialog practice-review" aria-label="Review your attempt" onCancel={onClose} onClick={backdropClick}>
-    <button className="icon-button dialog-close" aria-label="Close dialog" onClick={onClose}><HistoryIcon name="close" /></button>
+  return <dialog ref={dialogRef} className="studio-dialog attempt-dialog practice-review" aria-label="Review your attempt" onCancel={closeViewer} onClick={backdropClick}>
+    <button className="icon-button dialog-close" aria-label="Close dialog" onClick={closeViewer}><HistoryIcon name="close" /></button>
     <span className="eyebrow">YOUR PRACTICE LIBRARY</span>
     <h2>{track?.name} · Note {attempt.level}</h2><p>{dateLabel(attempt.createdAt)}</p>
     <div className="review-stats"><span><strong>{scoreLabel(detail.score)}</strong> form score</span><span><strong>{detail.repCount}</strong> {detail.repCount === 1 ? 'rep' : 'reps'}</span><span className={detail.passed ? 'success-text' : ''}>{result.label}</span></div>
     {error && <p className="history-review-error" role="alert">{error}</p>}
-    {loading ? <p role="status">Opening your attempt…</p> : videoUrl ? <video className="saved-video" src={videoUrl} controls playsInline preload="metadata" /> : <div className="no-recording"><HistoryIcon size={28} /><p>No video is stored here for this attempt.</p><small>Your scores and coaching are below. Recordings stay on the device where you practised.</small></div>}
+    {loading ? <p role="status">Opening your attempt…</p> : videoUrl ? <video ref={videoRef} className="saved-video" src={videoUrl} controls playsInline preload="metadata" onPlay={stopFeedback} /> : <div className="no-recording"><HistoryIcon size={28} /><p>No video is stored here for this attempt.</p><small>Your scores and coaching are below. Recordings stay on the device where you practised.</small></div>}
     {videoUrl && <button className="plain-button download-video" onClick={download}><HistoryIcon name="download" /> Download recording</button>}
-    {!loading && detail.mode === 'set' && detail.status !== 'active' ? <SetFeedback feedback={summarizeSet(reps)} /> : detail.feedback?.summary && <div className="review-coach"><strong>Latest coaching</strong><p>{detail.feedback.summary}</p>{detail.feedback.tips?.length > 0 && <ul>{detail.feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}</div>}
+    {setFeedback ? <SetFeedback feedback={setFeedback} /> : detail.feedback?.summary && <div className="review-coach"><strong>Latest coaching</strong><p>{detail.feedback.summary}</p>{detail.feedback.tips?.length > 0 && <ul>{detail.feedback.tips.map((tip, index) => <li key={index}>{tip}</li>)}</ul>}</div>}
+    {!loading && summaryFeedback && <CoachingAudioControl state={audioState.repId === summaryAudioId ? audioState : undefined}
+      onRead={() => readFeedback(summaryFeedback, summaryAudioId)} onPlay={resumeFeedback} onStop={stopFeedback} />}
     {reps.length > 0 && <div className="review-reps"><h3>Rep by rep</h3>{reps.map((rep, index) => {
       const feedback = rep.feedback;
       const score = feedback?.score ?? rep.score;
       const pending = ['pending', 'queued', 'reviewing'].includes(rep.reviewStatus);
       const failed = rep.reviewStatus === 'error';
+      const repAudioId = rep.id != null ? String(rep.id) : `${attempt.id}:rep:${index}`;
       return <section key={rep.id ?? index}><div className="review-rep-heading"><strong>Rep {rep.repNumber ?? index + 1}</strong><span>{Number.isFinite(score) ? `${scoreLabel(score)} / 100` : pending ? 'Review pending' : failed ? 'Review incomplete' : 'Not scored'}</span></div>
         {feedback?.summary && <p>{feedback.summary}</p>}
         {feedback?.tips?.length > 0 && <ul className="rep-coaching-tips">{feedback.tips.map((tip, tipIndex) => <li key={tipIndex}>{tip}</li>)}</ul>}
+        {feedback && <CoachingAudioControl state={audioState.repId === repAudioId ? audioState : undefined}
+          onRead={() => readFeedback(feedback, repAudioId, rep.repNumber ?? index + 1)} onPlay={resumeFeedback} onStop={stopFeedback} />}
         {failed && <p className="rep-review-issue">{rep.reviewError || 'This rep could not be reviewed. The attempt has been kept.'}</p>}
         {pending && <p>The review was still in progress when this attempt was opened.</p>}
         {!pending && !failed && !feedback && <p>No coaching was saved for this rep.</p>}
